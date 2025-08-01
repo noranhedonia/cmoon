@@ -4,8 +4,7 @@
     .minimum_zig_version = "0.14.0",
     .fingerprint = 0xda186274526b840c,
     .paths = .{
-        "engine",
-        "main",
+        "source",
         "build.zig",
         "build.zig.zon",
         "LICENSE",

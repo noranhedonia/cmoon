@@ -16,9 +16,9 @@
 \RequirePackage{silence}
 
 \RequirePackage[dvipsnames,table]{xcolor}
+\RequirePackage{amsmath,amssymb}
 \RequirePackage{graphicx,calc}
 \RequirePackage{stfloats}
-\RequirePackage{amsmath}
 \RequirePackage{wrapfig}
 \RequirePackage{units}
 \RequirePackage{tikz}

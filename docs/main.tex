@@ -8,37 +8,17 @@
 \maketitle
 \tableofcontents
 
-\section{TODO}
-\subsection{Main build (linux, x86\_64)}
-\begin{itemize}
-    \item Bindings and backends for Vulkan, Wayland, PipeWire
-    \item Later bindings for XCB, DRM/KMS, ALSA, JACK, PulseAudio
-    \item Fiber job system, a logger and custom memory allocator
-\end{itemize}
+\part{Engine}
+\section{Framework}
+\include{0-framework/fiber}
 
-\subsection{Android build}
-\begin{itemize}
-    \item An ARM port for Linux
-    \item Bindings and backends for the Android NDK, AAudio
-\end{itemize}
+\section{Display}
+\include{1-display/wayland}
 
-\subsection{Web build (maybe?)}
-\begin{itemize}
-    \item Bindings for emscripten
-    \item WebGPU rendering backend
-\end{itemize}
+\section{Graphics}
+\include{2-graphics/vulkan}
 
-\subsection{Mac/iOS builds}
-\begin{itemize}
-    \item Get a Mac machine to work with...
-    \item Bindings for Cocoa, UIKit, CoreAudio
-    \item Optional: Metal rendering backend
-\end{itemize}
-
-\subsection{Windows build}
-\begin{itemize}
-    \item Bindings for: Win32 API, XAudio2, WASAPI
-    \item Optional: D3D12 rendering backend
-\end{itemize}
+\section{Audio}
+\include{3-audio/pipewire}
 
 \end{document}

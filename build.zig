@@ -1,55 +1,56 @@
 const std = @import("std");
 
 pub fn build(b: *std.Build) void {
+    // Standard target options allow the user running `zig build` to choose 
+    // what target to build for. Here we do not override the defaults, which
+    // means any target is allowed, and the default is native. Other options 
+    // for restricting supported target set are available.
     const target = b.standardTargetOptions(.{});
+
+    // Standard release options allow the person running `zig build` to select
+    // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
     const optimize = b.standardOptimizeOption(.{});
 
-    const lib_mod = b.createModule(.{
-        .root_source_file = b.path("source/root.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
+    // apis/libraries we'll need below
+    const wayland = makeWaylandModule(b);
+    const vulkan = makeVulkanModule(b);
 
-    const exe_mod = b.createModule(.{
+    _ = wayland;
+    _ = vulkan;
+
+    const cmoon_mod = b.createModule(.{
         .root_source_file = b.path("source/main.zig"),
         .target = target,
         .optimize = optimize,
     });
-    exe_mod.addImport("cmoon_lib", lib_mod);
-
-    const lib = b.addLibrary(.{
-        .linkage = .static,
+    const cmoon = b.addExecutable(.{
         .name = "cmoon",
-        .root_module = lib_mod,
+        .root_module = cmoon_mod,
     });
-    b.installArtifact(lib);
+    b.installArtifact(cmoon);
 
-    const exe = b.addExecutable(.{
-        .name = "cmoon",
-        .root_module = exe_mod,
-    });
-    b.installArtifact(exe);
-
-    const run_cmd = b.addRunArtifact(exe);
+    const run_cmd = b.addRunArtifact(cmoon);
     run_cmd.step.dependOn(b.getInstallStep());
 
     if (b.args) |args| {
         run_cmd.addArgs(args);
     }
-    const run_step = b.step("run", "Run the app");
+    const run_step = b.step("run", "Run Cynic Moon");
     run_step.dependOn(&run_cmd.step);
 
-    const lib_unit_tests = b.addTest(.{
-        .root_module = lib_mod,
+    const unit_tests = b.addTest(.{
+        .root_module = cmoon_mod,
     });
-    const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
-
-    const exe_unit_tests = b.addTest(.{
-        .root_module = exe_mod,
-    });
-    const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
+    const run_unit_tests = b.addRunArtifact(unit_tests);
 
     const test_step = b.step("test", "Run unit tests");
-    test_step.dependOn(&run_lib_unit_tests.step);
-    test_step.dependOn(&run_exe_unit_tests.step);
+    test_step.dependOn(&run_unit_tests.step);
+}
+
+fn makeVulkanModule(b: *std.Build) *std.Build.Module {
+    _ = b;
+}
+
+fn makeWaylandModule(b: *std.Build) *std.Build.Module {
+    _ = b;
 }
