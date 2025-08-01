@@ -17,7 +17,7 @@ pub const WorkSubmit = struct {
 pub const WorkChain = *usize;
 
 /// Implemented in assembly, ofc/nfc - original/new fiber context.
-extern fn jumpFiberContext(ofc: *anyopaque, nfc: *anyopaque, vp: isize, preserve_fpu: i32) callconv(.C) isize;
+extern fn jumpFiberContext(ofc: *anyopaque, nfc: *anyopaque, vp: isize, preserve_fpu: c_int) callconv(.C) isize;
 
 /// Implemented in assembly, sp - top of stack pointer.
 extern fn spawnFiberContext(sp: *anyopaque, stack_size: usize, procedure: WorkFn) callconv(.C) *anyopaque;

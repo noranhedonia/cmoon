@@ -4,7 +4,6 @@ The Wayland book is a great resource to figure out details of how to implement W
 
 The libwayland-client and libwayland-server libraries implement the wire protocol for each end of the connection.
 These libraries also include some utilities for working with Wayland data structures, a simple event loop, and a pre-compiled copy of the core Wayland protocol.
-But we will not be using libwayland directly, implementing a connection with the Wayland compositor ourselves via the wire protocol.
 
 There's also a great presentation in Zig made by Jonathan Marler for the X11 server, touching basically the same principles we'll be exploring via our Wayland backend (and X11 later).
 [How to Use Abstraction to Kill Your API - Jonathan Marler - Software You Can Love Vancouver 2023]\url{https://www.youtube.com/watch?v=aPWFLkHRIAQ}

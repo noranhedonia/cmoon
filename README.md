@@ -1,16 +1,15 @@
 ## C. MOON
-All source code in this repository is free (licensed under MIT),
-and the LaTeX technical documentation is in the public domain (licensed under CC0).
+All source code in this repository is free (licensed under MIT).
 Feel free to do whatever you want with this stuff.
 
 You can contact me at discord @noranhedonia, I'm open for creative collaboration.
 
 ### Subprojects
 This repository hosts:
-- An engine library.
+- A modular engine library.
 - A video game application.
-- The LaTeX technical documentation.
-- Few offline tools and scripts in different languages.
+- A LaTeX technical documentation.
+- Few offline tools and scripts.
 
 #### Engine (WIP)
 TODO. Document the engine features.

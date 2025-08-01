@@ -1,15 +1,16 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const Allocator = std.mem.Allocator;
 
-// replace with custom logger
-const log = std.log.scoped(.cmoon);
+pub const parsers = struct {
+    pub const xml = @import("./parsers/xml.zig");
+};
+pub const work = @import("./work.zig");
 
-pub inline fn dynLibOpen(lib_name: []const u8) !std.DynLib {
+pub fn dynLibOpen(lib_name: []const u8) !std.DynLib {
     return std.DynLib.open(lib_name) catch |err| {
         switch (err) {
             error.FileNotFound => {
-                log.err("Missing system library: `{s}`.", .{lib_name});
+                std.log.err("Missing system library: `{s}`.", .{lib_name});
                 return error.LibraryNotFound;
             }, else => return err,
         }
