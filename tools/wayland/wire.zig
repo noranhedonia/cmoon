@@ -391,9 +391,8 @@ pub fn deserialize(
     buffer: []const u8, 
     index: *usize, 
     control_buffer: []const u8, 
-    control_index: *usize) 
-    DeserializeError!Union 
-{
+    control_index: *usize,
+) DeserializeError!Union {
     if (std.meta.fields(Union).len == 0) std.debug.panic(@typeName(Union) ++ " event has no tags!", .{});     
     const header: *const Header = @ptrCast(@alignCast(buffer[index.*..][0..@sizeOf(Header)]));
     if (header.size() > buffer[index.*..].len) { return error.UnexpectedEndOfMessage; }
@@ -418,9 +417,8 @@ pub fn deserializeArguments(
     buffer: []const u8,
     index: *usize,
     control_buffer: []const u8,
-    control_index: *usize)
-    DeserializeError!Signature
-{
+    control_index: *usize,
+) DeserializeError!Signature {
     if (Signature == void) return {};
     if (@typeInfo(Signature) != .Struct) @compileError("Unexpected type " ++ @typeName(Signature) ++ 
         ", expected Struct found " ++ @tagName(@typeInfo(Signature)));

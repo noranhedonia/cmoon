@@ -281,9 +281,8 @@ pub const Connection = struct {
         I: type, 
         object: wire.Object.WithInterface(I), 
         comptime opcode: std.meta.Tag(I.Request), 
-        params: RequestWithoutNewId(I.Request, opcode))
-        !RequestReturnType(I.Request, opcode)
-    {
+        params: RequestWithoutNewId(I.Request, opcode),
+    ) !RequestReturnType(I.Request, opcode) {
         var result: RequestReturnType(I.Request, opcode) = undefined;
         if (RequestReturnType(I.Request, opcode) != void)
             result = try connection.createObject(@TypeOf(result)._INTERFACE);
@@ -369,9 +368,8 @@ pub const Connection = struct {
     pub fn dispatchMessages(
         connection: *Connection, 
         buffer: []const u8, 
-        control_messages: []const u8) 
-        !struct { buffer: []const u8, control: []const u8 } 
-    {
+        control_messages: []const u8,
+    ) !struct { buffer: []const u8, control: []const u8 } {
         var index: usize = 0;
         var control_index: usize = 0;
         while (buffer[index..].len >= @sizeOf(wire.Header)) {
@@ -418,9 +416,8 @@ pub const Connection = struct {
         listener: *Listener, 
         comptime callback: *const fn (*Listener, *Connection, ObjectI, ObjectI.Event)
         Listener.Error!void,
-        userdata: ?*anyopaque)
-        void 
-    {
+        userdata: ?*anyopaque,
+    ) void {
         const Wrapper = struct {
             fn onMessageReceived(
                 connection_inner: *Connection, 

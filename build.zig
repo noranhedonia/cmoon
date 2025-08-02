@@ -50,11 +50,11 @@ pub fn build(b: *std.Build) void {
     main_run_step.dependOn(&main_run_cmd.step);
 }
 
-fn makeCMoonEncoreModule(b: *std.Build) *std.Build.Module 
-{
-    const target = b.standardTargetOptions(.{});
-    const optimize = b.standardOptimizeOption(.{});
-
+pub fn makeCMoonEncoreModule(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+) *std.Build.Module {
     const asm_cpu = switch (target.result.cpu.arch) {
         .x86_64 => "amd64",
         .aarch64 => "aarch64",
@@ -87,39 +87,87 @@ fn makeCMoonEncoreModule(b: *std.Build) *std.Build.Module
     return encore_module;
 }
 
-fn makeCMoonDisplayModule(
+pub fn makeCMoonDisplayModule(
     b: *std.Build,
-    encore_module: *std.Build.Module)
-    *std.Build.Module 
-{
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    encore_module: *std.Build.Module,
+) *std.Build.Module {
     const display_module = b.addModule("cmoon-display", .{
         .root_source_file = b.path("source/display/impl.zig"),
-        .target = b.standardTargetOptions(.{}), 
-        .optimize = b.standardOptimizeOption(.{}),
+        .target = target,
+        .optimize = optimize,
         .imports = &.{.{ .name = "cmoon-encore", .module = encore_module }},
     });
-    display_module.addImport("wayland", makeWaylandModule(b, encore_module));
+    //display_module.addImport("wayland", makeWaylandModule(b, target, optimize, encore_module));
     return display_module;
 }
 
-const GenerateProtocolsOptions = struct {
+pub fn makeCMoonAudioModule(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    encore_module: *std.Build.Module,
+) *std.Build.Module {
+    const audio_module = b.addModule("cmoon-audio", .{
+        .root_source_file = b.path("source/audio/impl.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "cmoon-encore", .module = encore_module }},
+    });
+    return audio_module;
+}
+
+pub fn makeCMoonGfxModule(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    encore_module: *std.Build.Module,
+) *std.Build.Module {
+    const gfx_module = b.addModule("cmoon-gfx", .{
+        .root_source_file = b.path("source/graphics/impl.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "cmoon-encore", .module = encore_module }},
+    });
+    gfx_module.addImport("vulkan", makeVulkanModule(b, target, optimize, encore_module));
+    return gfx_module;
+}
+
+pub const GenerateProtocolsOptions = struct {
     output_directory_name: ?[]const u8,
     output_compat_name: ?[]const u8 = null,
     source_files: []const std.Build.LazyPath,
+    interface_versions: []const InterfaceVersion = &.{},
+    imports: []const Import,
+
+    pub const InterfaceVersion = struct {
+        interface: []const u8,
+        version: u32,
+    };
+    pub const Import = struct {
+        file: std.Build.LazyPath,
+        import_string: []const u8,
+    };
 };
-const GenerateProtocolsResult = struct {
+pub const GenerateProtocolsResult = struct {
     output_directory: ?std.Build.LazyPath,
     output_compat_file: ?std.Build.LazyPath,
 };
 
-fn makeWaylandModule(
+/// Implements the Wayland protocol scanner, parses xmls of protocols to create Zig 
+/// bindings and defines compatibility layers for libwayland-client.so.0 as we need 
+/// it for using the Vulkan surface and swapchain. The xml files of protocols used 
+/// within this application is included in the repository.
+///
+/// This tool is a modified version of shimizu by geemili:
+/// https://git.sr.ht/~geemili/shimizu
+pub fn makeWaylandModule(
     b: *std.Build,
-    encore_module: *std.Build.Module)
-    ?*std.Build.Module 
-{
-    const target = b.standardTargetOptions(.{});
-    const optimize = b.standardOptimizeOption(.{});
-
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    encore_module: *std.Build.Module,
+) *std.Build.Module {
     const wayland_wire_module = b.createModule(.{ .root_source_file = b.path("tools/wayland/wire.zig") });
     const scanner_exe = b.addExecutable(.{
         .name = "wayland-zig-scanner",
@@ -131,8 +179,8 @@ fn makeWaylandModule(
     const scanner_generate_cmd = b.addRunArtifact(scanner_exe);
 
     const wayland_protocols_generate_options = GenerateProtocolsOptions{
-        .output_directory_name = "wayland-protocols",
-        .output_compat_name = "wayland-protocols-compat.zig",
+        .output_directory_name = "source/wayland-protocols",
+        .output_compat_name = "source/wayland-protocols-compat.zig",
         .source_files = &.{
             b.path("protocols/wayland.xml"),
             b.path("protocols/color-management-v1.xml"),
@@ -144,6 +192,8 @@ fn makeWaylandModule(
             b.path("protocols/pointer-constraints-unstable-v1.xml"),
             b.path("protocols/pointer-gestures-unstable-v1.xml"),
             b.path("protocols/relative-pointer-unstable-v1.xml"),
+            b.path("protocols/river-control-unstable-v1.xml"),
+            b.path("protocols/river-layout-v3.xml"),
             b.path("protocols/tablet-unstable-v2.xml"),
             b.path("protocols/text-input-unstable-v3.xml"),
             b.path("protocols/viewporter.xml"),
@@ -155,16 +205,28 @@ fn makeWaylandModule(
             b.path("protocols/xdg-shell.xml"),
             b.path("protocols/xdg-toplevel-icon-v1.xml"),
         },
+        .interface_versions = &.{},
+        .imports = &.{},
     };
     for (wayland_protocols_generate_options.source_files) |source_file| { scanner_generate_cmd.addFileArg(source_file); }
-    var wayland_protocols_generate_result: GenerateProtocolsResult = .{ null, null };
+    var wayland_protocols_generate_result: GenerateProtocolsResult = .{ 
+        .output_directory = null, 
+        .output_compat_file = null 
+    };
+    for (wayland_protocols_generate_options.interface_versions) |interface_version|
+        scanner_generate_cmd.addArgs(&.{ "-v", interface_version.interface, b.fmt("{d}", .{ interface_version.version }), });
 
+    for (wayland_protocols_generate_options.imports) |import| {
+        scanner_generate_cmd.addArg("-i");
+        scanner_generate_cmd.addFileArg(import.file);
+        scanner_generate_cmd.addArg(import.import_string);
+    }
     if (wayland_protocols_generate_options.output_directory_name) |dir_name| {
-        scanner_generate_cmd.addArg("--output");
+        scanner_generate_cmd.addArg("-o");
         wayland_protocols_generate_result.output_directory = scanner_generate_cmd.addOutputDirectoryArg(dir_name);
     }
     if (wayland_protocols_generate_options.output_compat_name) |file_name| {
-        scanner_generate_cmd.addArg("--output-compat");
+        scanner_generate_cmd.addArg("-c");
         wayland_protocols_generate_result.output_compat_file = scanner_generate_cmd.addOutputDirectoryArg(file_name);
     }
     const wayland_protocols_module = b.createModule(.{
@@ -189,46 +251,29 @@ fn makeWaylandModule(
     });
 }
 
-fn makeCMoonAudioModule(
+/// Generates Zig bindings of the Vulkan headers via vk.xml and video.xml. 
+/// A copy of both vk.xml and video.xml are included in this repository.
+///
+/// This tool is a modified version of vulkan-zig by Snektron: 
+/// https://github.com/Snektron/vulkan-zig
+///
+/// The most recent Vulkan XML API registry can be obtained from 
+/// https://github.com/KhronosGroup/Vulkan-Docs/blob/master/xml/vk.xml,
+/// and the most recent LunarG Vulkan SDK version can be found at
+/// $VULKAN_SDK/x86_64/share/vulkan/registry/vk.xml.
+pub fn makeVulkanModule(
     b: *std.Build,
-    encore_module: *std.Build.Module)
-    *std.Build.Module 
-{
-    const audio_module = b.addModule("cmoon-audio", .{
-        .root_source_file = b.path("source/audio/impl.zig"),
-        .target = b.standardTargetOptions(.{}), 
-        .optimize = b.standardOptimizeOption(.{}),
-        .imports = &.{.{ .name = "cmoon-encore", .module = encore_module }},
-    });
-    return audio_module;
-}
-
-fn makeCMoonGfxModule(
-    b: *std.Build,
-    encore_module: *std.Build.Module)
-    *std.Build.Module 
-{
-    const cmoon_gfx_module = b.addModule("cmoon-gfx", .{
-        .root_source_file = b.path("source/graphics/impl.zig"),
-        .target = b.standardTargetOptions(.{}), 
-        .optimize = b.standardOptimizeOption(.{}),
-        .imports = &.{.{ .name = "cmoon-encore", .module = encore_module }},
-    });
-    cmoon_gfx_module.addImport("vulkan", makeVulkanModule(b, encore_module));
-}
-
-fn makeVulkanModule(
-    b: *std.Build,
-    encore_module: *std.Build.Module)
-    ?*std.Build.Module 
-{
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    encore_module: *std.Build.Module,
+) *std.Build.Module {
     const registry_path = b.path("vk.xml");
     const video_path = b.path("video.xml");
 
     const generator_module = b.createModule(.{
         .root_source_file = b.path("tools/vulkan/main.zig"),
-        .target = b.standardTargetOptions(.{}), 
-        .optimize = b.standardOptimizeOption(.{}),
+        .target = target, 
+        .optimize = optimize,
         .imports = &.{.{ .name = "cmoon-encore", .module = encore_module }},
     });
     const generator_exe = b.addExecutable(.{
