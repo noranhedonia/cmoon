@@ -1,6 +1,5 @@
 const std = @import("std");
 const wire = @import("wayland-wire");
-const encore = @import("cmoon-encore");
 
 pub const wp = @import("wayland-protocols-compat");
 
@@ -63,18 +62,15 @@ pub const LibWaylandClient = struct {
 
     pub fn load() !LibWaylandClient {
         var lib: LibWaylandClient = undefined;
-        lib.handle = encore.dynLibOpen("libwayland-client.so.0") catch return error.LibraryNotFound;
-        var failed = false;
+        lib.handle = std.dynLib.open("libwayland-client.so.0") catch return error.LibraryNotFound;
         inline for (@typeInfo(LibWaylandClient).Struct.fields[1..]) |field| {
             const name = std.fmt.comptimePrint("{s}\x00", .{field.name});
             const name_z: [:0]const u8 = @ptrCast(name[0 .. name.len - 1]);
-            @field(lib, field.name) = lib.handle.lookup(field.type, name_z) orelse blk: {
+            @field(lib, field.name) = lib.handle.lookup(field.type, name_z) orelse {
                 std.log.err("Symbol lookup failed for {s}", .{name});
-                failed = true;
-                break :blk undefined;
+                return error.SymbolLookup;
             };
         }
-        if (failed) return error.SymbolLookup;
         return lib;
     }
 

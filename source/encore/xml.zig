@@ -1,7 +1,5 @@
 const std = @import("std");
-const mem = std.mem;
-const testing = std.testing;
-const Allocator = mem.Allocator;
+const Allocator = std.mem.Allocator;
 const ArenaAllocator = std.heap.ArenaAllocator;
 
 pub const Attribute = struct {
@@ -22,7 +20,7 @@ pub const Element = struct {
 
     pub fn getAttribute(this: Element, attrib_name: []const u8) ?[]const u8 {
         for (this.attributes) |child| {
-            if (mem.eql(u8, child.name, attrib_name)) {
+            if (std.mem.eql(u8, child.name, attrib_name)) {
                 return child.value;
             }
         }
@@ -99,7 +97,7 @@ pub const Element = struct {
 
         pub fn next(this: *FindChildrenByTagIterator) ?*Element {
             while (this.inner.next()) |child| {
-                if (!mem.eql(u8, child.tag, this.tag)) {
+                if (!std.mem.eql(u8, child.tag, this.tag)) {
                     continue;
                 }
                 return child;
@@ -184,7 +182,7 @@ const Parser = struct {
     fn expectStr(this: *Parser, text: []const u8) !void {
         if (this.source.len < this.offset + text.len) {
             return error.UnexpectedEof;
-        } else if (mem.startsWith(u8, this.source[this.offset..], text)) {
+        } else if (std.mem.startsWith(u8, this.source[this.offset..], text)) {
             var i: usize = 0;
             while (i < text.len) : (i += 1) {
                 _ = this.consumeNoEof();
@@ -215,10 +213,10 @@ const Parser = struct {
 
     fn currentLine(this: Parser) []const u8 {
         var begin: usize = 0;
-        if (mem.lastIndexOfScalar(u8, this.source[0..this.offset], '\n')) |prev_nl| {
+        if (std.mem.lastIndexOfScalar(u8, this.source[0..this.offset], '\n')) |prev_nl| {
             begin = prev_nl + 1;
         }
-        const end = mem.indexOfScalarPos(u8, this.source, this.offset, '\n') orelse this.source.len;
+        const end = std.mem.indexOfScalarPos(u8, this.source, this.offset, '\n') orelse this.source.len;
         return this.source[begin..end];
     }
 };
@@ -249,7 +247,6 @@ fn parseDocument(parser: *Parser, backing_allocator: Allocator) !Document {
         .root = undefined,
     };
     errdefer doc.deinit();
-
     const allocator = doc.arena.allocator();
     try skipComments(parser, allocator);
 
@@ -275,7 +272,6 @@ fn parseAttrValue(parser: *Parser, alloc: Allocator) ![]const u8 {
         if (c == quote) break;
     }
     const end = parser.offset - 1;
-
     return try unescape(alloc, parser.source[begin..end]);
 }
 
@@ -283,7 +279,6 @@ fn parseEqAttrValue(parser: *Parser, alloc: Allocator) ![]const u8 {
     _ = parser.eatWs();
     try parser.expect('=');
     _ = parser.eatWs();
-
     return try parseAttrValue(parser, alloc);
 }
 
@@ -356,7 +351,7 @@ fn parseElement(parser: *Parser, alloc: Allocator, comptime kind: ElementKind) !
 
     const tag = switch (kind) {
         .xml_decl => blk: {
-            if (!parser.eatStr("<?") or !mem.eql(u8, try parseNameNoDupe(parser), "xml")) {
+            if (!parser.eatStr("<?") or !std.mem.eql(u8, try parseNameNoDupe(parser), "xml")) {
                 parser.offset = start;
                 return null;
             }
@@ -397,7 +392,7 @@ fn parseElement(parser: *Parser, alloc: Allocator, comptime kind: ElementKind) !
                     try children.append(content);
                 }
                 const closing_tag = try parseNameNoDupe(parser);
-                if (!mem.eql(u8, tag, closing_tag)) {
+                if (!std.mem.eql(u8, tag, closing_tag)) {
                     return error.NonMatchingClosingTag;
                 }
                 _ = parser.eatWs();
@@ -442,7 +437,7 @@ fn unescapeEntity(text: []const u8) !u8 {
         .{ .text = "&quot;", .replacement = '"' },
     };
     for (entities) |entity| {
-        if (mem.eql(u8, text, entity.text)) return entity.replacement;
+        if (std.mem.eql(u8, text, entity.text)) return entity.replacement;
     }
     return error.InvalidEntity;
 }
@@ -454,7 +449,7 @@ fn unescape(arena: Allocator, text: []const u8) ![]const u8 {
     var i: usize = 0;
     while (i < text.len) : (j += 1) {
         if (text[i] == '&') {
-            const entity_end = 1 + (mem.indexOfScalarPos(u8, text, i, ';') orelse return error.InvalidEntity);
+            const entity_end = 1 + (std.mem.indexOfScalarPos(u8, text, i, ';') orelse return error.InvalidEntity);
             unescaped[j] = try unescapeEntity(text[i..entity_end]);
             i = entity_end;
         } else {

@@ -1,5 +1,5 @@
 \NeedsTeXFormat{LaTeX2e}
-\ProvidesClass{cmoon}[C. MOON Technical Documentation]
+\ProvidesClass{cynicmoon}[Cynic Moon Technical Documentation]
 \LoadClass[a4paper,twoside]{article}
 
 \pagenumbering{arabic}

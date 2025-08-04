@@ -83,23 +83,23 @@ pub fn main() !void {
         } else if (maybe_out_path == null) {
             maybe_out_path = arg;
         } else {
-            invalidUsage(prog_name, "superficial argument '{s}'", .{arg});
+            invalidUsage(prog_name, "Superficial argument '{s}'", .{arg});
         }
     }
     const xml_path = maybe_xml_path orelse {
-        invalidUsage(prog_name, "missing required argument <spec xml path>", .{});
+        invalidUsage(prog_name, "Missing required argument <spec xml path>", .{});
     };
     const out_path = maybe_out_path orelse {
-        invalidUsage(prog_name, "missing required argument <output zig source>", .{});
+        invalidUsage(prog_name, "Missing required argument <output zig source>", .{});
     };
     const cwd = std.fs.cwd();
     const xml_src = cwd.readFileAlloc(allocator, xml_path, std.math.maxInt(usize)) catch |err| {
-        std.log.err("failed to open input file '{s}' ({s})", .{ xml_path, @errorName(err) });
+        std.log.err("Failed to open input file '{s}' ({s})", .{ xml_path, @errorName(err) });
         std.process.exit(1);
     };
     const maybe_video_xml_src = if (maybe_video_xml_path) |video_xml_path|
         cwd.readFileAlloc(allocator, video_xml_path, std.math.maxInt(usize)) catch |err| {
-            std.log.err("failed to open input file '{s}' ({s})", .{ video_xml_path, @errorName(err) });
+            std.log.err("Failed to open input file '{s}' ({s})", .{ video_xml_path, @errorName(err) });
             std.process.exit(1);
         }
     else

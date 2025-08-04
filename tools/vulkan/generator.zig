@@ -1,5 +1,5 @@
 const std = @import("std");
-const xml = @import("cmoon-encore").parsers.xml;
+const xml = @import("cynicmoon-encore").xml;
 const parseXml = @import("./parser.zig").parseXml;
 const reg = @import("./registry.zig");
 const IdRenderer = @import("./render-id.zig").IdRenderer;

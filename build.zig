@@ -7,50 +7,38 @@ pub fn build(b: *std.Build) void {
     // TODO add `test` step and `docs` step, pass them as arguments so other modules can emit their tests/documentation
     // TODO if host has a LaTeX distribution installed, emit the technical documentation too via `docs`
 
-    // Used to assemble different engine submodules into a library
-    const cmoon_module = b.addModule("cmoon", .{ 
-        .root_source_file = b.path("source/cmoon.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    const cmoon_encore_module = makeCMoonEncoreModule(b, target, optimize);
-    cmoon_module.addImport("cmoon-encore", cmoon_encore_module);
-
-    const cmoon_display_module = makeCMoonDisplayModule(b, target, optimize, cmoon_encore_module);
-    cmoon_module.addImport("cmoon-display", cmoon_display_module);
-
-    const cmoon_audio_module = makeCMoonAudioModule(b, target, optimize, cmoon_encore_module);
-    cmoon_module.addImport("cmoon-audio", cmoon_audio_module);
-
-    const cmoon_gfx_module = makeCMoonGfxModule(b, target, optimize, cmoon_encore_module);
-    cmoon_module.addImport("cmoon-gfx", cmoon_gfx_module);
-
-    const cmoon_lib = b.addLibrary(.{
-        .name = "cmoon", 
-        .linkage = .static,
-        .root_module = cmoon_module,
-    });
-    b.installArtifact(cmoon_lib);
-
-    // the game application
-    const main_exe = b.addExecutable(.{
-        .name = "cmoon",
+    const cynicmoon_module = b.addModule("cynicmoon", .{ 
         .root_source_file = b.path("source/main.zig"),
         .target = target,
         .optimize = optimize,
     });
-    main_exe.root_module.addImport("cmoon", cmoon_module);
-    b.installArtifact(main_exe);
+    const cynicmoon_encore_module = makeCynicMoonEncoreModule(b, target, optimize);
+    cynicmoon_module.addImport("encore", cynicmoon_encore_module);
 
-    const main_run_cmd = b.addRunArtifact(main_exe);
-    main_run_cmd.step.dependOn(b.getInstallStep());
-    if (b.args) |args| { main_run_cmd.addArgs(args); }
+    //cynicmoon_module.addImport("wayland", makeWaylandModule(b, target, optimize, cynicmoon_encore_module));
+    cynicmoon_module.addImport("xkbcommon", b.createModule(.{
+        .root_source_file = b.path("tools/xkb/xkbcommon.zig"),
+        .target = target,
+        .optimize = optimize,
+    }));
+    cynicmoon_module.addImport("vulkan", makeVulkanModule(b, target, optimize, cynicmoon_encore_module));
 
-    const main_run_step = b.step("run", "Run Cynic Moon");
-    main_run_step.dependOn(&main_run_cmd.step);
+    // the game application
+    const cynicmoon_exe = b.addExecutable(.{
+        .name = "cynicmoon",
+        .root_module = cynicmoon_module,
+    });
+    b.installArtifact(cynicmoon_exe);
+
+    const cynicmoon_run_cmd = b.addRunArtifact(cynicmoon_exe);
+    cynicmoon_run_cmd.step.dependOn(b.getInstallStep());
+    if (b.args) |args| { cynicmoon_run_cmd.addArgs(args); }
+
+    const cynicmoon_run_step = b.step("run", "Run CynicMoon");
+    cynicmoon_run_step.dependOn(&cynicmoon_run_cmd.step);
 }
 
-pub fn makeCMoonEncoreModule(
+pub fn makeCynicMoonEncoreModule(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
@@ -63,10 +51,10 @@ pub fn makeCMoonEncoreModule(
         else => std.debug.panic("Unsupported CPU: {s}", .{ @tagName(target.result.cpu.arch) }),
     };
     const asm_os = switch (target.result.cpu.arch) {
-        .aarch64 => "_aapcs_", else => switch(target.result.os.tag) {
-            .windows => "_ms_", 
-            .freestanding => "",
-            else => "_sysv_",
+        .aarch64 => "aapcs", else => switch(target.result.os.tag) {
+            .windows => "ms", 
+            .freestanding => "free",
+            else => "sysv",
         },
     };
     const asm_abi = switch (target.result.os.tag) {
@@ -76,62 +64,15 @@ pub fn makeCMoonEncoreModule(
         else => "elf",
     };
     var asm_path_buf: [100]u8 = undefined; 
-    const asm_path = std.fmt.bufPrint(&asm_path_buf, "source/encore/asm/fcontext_{s}{s}{s}.s", .{ asm_cpu, asm_os, asm_abi })
+    const asm_path = std.fmt.bufPrint(&asm_path_buf, "source/encore/asm/fcontext-{s}-{s}-{s}.s", .{ asm_cpu, asm_os, asm_abi })
         catch |err| std.debug.panic("Path formatting for assembly failed: {}", .{err});
 
-    const encore_module = b.addModule("cmoon-encore", .{
+    const encore_module = b.addModule("cynicmoon-encore", .{
         .root_source_file = b.path("source/encore/impl.zig"),
         .target = target, .optimize = optimize,
     });
     encore_module.addAssemblyFile(b.path(asm_path));
     return encore_module;
-}
-
-pub fn makeCMoonDisplayModule(
-    b: *std.Build,
-    target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
-    encore_module: *std.Build.Module,
-) *std.Build.Module {
-    const display_module = b.addModule("cmoon-display", .{
-        .root_source_file = b.path("source/display/impl.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{.{ .name = "cmoon-encore", .module = encore_module }},
-    });
-    //display_module.addImport("wayland", makeWaylandModule(b, target, optimize, encore_module));
-    return display_module;
-}
-
-pub fn makeCMoonAudioModule(
-    b: *std.Build,
-    target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
-    encore_module: *std.Build.Module,
-) *std.Build.Module {
-    const audio_module = b.addModule("cmoon-audio", .{
-        .root_source_file = b.path("source/audio/impl.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{.{ .name = "cmoon-encore", .module = encore_module }},
-    });
-    return audio_module;
-}
-
-pub fn makeCMoonGfxModule(
-    b: *std.Build,
-    target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
-    encore_module: *std.Build.Module,
-) *std.Build.Module {
-    const gfx_module = b.addModule("cmoon-gfx", .{
-        .root_source_file = b.path("source/graphics/impl.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{.{ .name = "cmoon-encore", .module = encore_module }},
-    });
-    gfx_module.addImport("vulkan", makeVulkanModule(b, target, optimize, encore_module));
-    return gfx_module;
 }
 
 pub const GenerateProtocolsOptions = struct {
@@ -174,7 +115,7 @@ pub fn makeWaylandModule(
         .root_source_file = b.path("tools/wayland/scanner.zig"),
         .target = b.graph.host,
     });
-    scanner_exe.root_module.addImport("cmoon-encore", encore_module);
+    scanner_exe.root_module.addImport("cynicmoon-encore", encore_module);
     b.installArtifact(scanner_exe);
     const scanner_generate_cmd = b.addRunArtifact(scanner_exe);
 
@@ -274,7 +215,7 @@ pub fn makeVulkanModule(
         .root_source_file = b.path("tools/vulkan/main.zig"),
         .target = target, 
         .optimize = optimize,
-        .imports = &.{.{ .name = "cmoon-encore", .module = encore_module }},
+        .imports = &.{.{ .name = "cynicmoon-encore", .module = encore_module }},
     });
     const generator_exe = b.addExecutable(.{
         .name = "vulkan-zig-generator",

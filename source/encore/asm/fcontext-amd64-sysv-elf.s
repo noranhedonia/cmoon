@@ -12,13 +12,13 @@
  *   0x30  | RBP
  *   0x38  | RIP (return address)
  *   0x40  | EXIT */
-.file "fcontext_amd64_sysv_elf.s"
+.file "fcontext-amd64-sysv-elf.s"
 .text
 
-.globl jumpFiberContext
-.type jumpFiberContext,@function
+.globl jump_fcontext
+.type jump_fcontext,@function
 .align 16
-jumpFiberContext:
+jump_fcontext:
     pushq   %rbp /* save RBP */
     pushq   %rbx /* save RBX */
     pushq   %r15 /* save R15 */
@@ -76,13 +76,13 @@ jumpFiberContext:
 
     /* indirect jump to context */
     jmp     *%r8
-.size jumpFiberContext,.-jumpFiberContext
+.size jump_fcontext,.-jump_fcontext
 
-.globl spawnFiberContext
-.type spawnFiberContext,@function
+.globl spawn_fcontext
+.type spawn_fcontext,@function
 .align 16
-spawnFiberContext:
-    /* first arg of spawnFiberContext() == top of context-stack */
+spawn_fcontext:
+    /* first arg of spawn_fcontext() == top of context-stack */
     movq    %rdi, %rax
 
     /* shift address in %rax to lower 16 byte boundary */
@@ -93,7 +93,7 @@ spawnFiberContext:
      * on context-function entry: (%rsp -0x8) % 16 == 0 */
     leaq    -0x48(%rax), %rax
 
-    /* third arg of spawnFiberContext() == address of context-function */
+    /* third arg of spawn_fcontext() == address of context-function */
     movq    %rdx, 0x38(%rax)
 
     /* save MMX control-word and status-word */
@@ -120,7 +120,7 @@ finish:
     movq    $231, %rax /* SYS_exit_group */
     syscall
     hlt
-.size spawnFiberContext,.-spawnFiberContext
+.size spawn_fcontext,.-spawn_fcontext
 
 /* mark that we don't need executable stack */
 .section .note.GNU-stack,"",%progbits

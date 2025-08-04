@@ -1,5 +1,5 @@
 const std = @import("std");
-const xml = @import("cmoon-encore").parsers.xml;
+const xml = @import("cynicmoon-encore").xml;
 
 pub fn main() !void  {
     var gpa = std.heap.GeneralPurposeAllocator(.{ .stack_trace_frames = 32 }){};
@@ -320,42 +320,19 @@ pub const Protocol = struct {
         this.arena.deinit();
         this.document.deinit();
     }
-    pub fn parse(allocator: std.mem.Allocator, xml_file_path: []const u8) !@This() {
-        if (!std.ascii.endsWithIgnoreCase(xml_file_path, ".xml")) return error.UnknownFileExtension;
+    pub fn parse(allocator: std.mem.Allocator, xml_path: []const u8) !@This() {
+        if (!std.ascii.endsWithIgnoreCase(xml_path, ".xml")) return error.UnknownFileExtension;
 
-        const xml_filename = std.fs.path.basename(xml_file_path);
+        const xml_filename = std.fs.path.basename(xml_path);
         // Filename without the extension.
         const basename = xml_filename[0..xml_filename.len - ".xml".len];
 
-        var document = try xml.parse(allocator, xml_file_path);
-        errdefer document.deinit();
-
-        var arena = std.heap.ArenaAllocator.init(allocator);
-        errdefer arena.deinit();
-
-        var interfaces = std.ArrayList(Interface).init(allocator);
-        errdefer {
-            for (interfaces.items) |interface| {
-                allocator.free(interface.description);
-                allocator.free(interface.enums);
-                allocator.free(interface.requests);
-                allocator.free(interface.events);
-            }
-            interfaces.deinit();
-        }
-        var copyright: ?std.ArrayList(u8) = null;
-        errdefer if (copyright) |*array_list| array_list.deinit();
-
+        const cwd = std.fs.cwd();
+        const xml_src = cwd.readFileAlloc(allocator, xml_path, std.math.maxInt(usize)) catch |err| {
+            std.log.err("Failed to open input file '{s}' ({s})", .{ xml_path, @errorName(err) });
+            std.process.exit(1);
+        };
         // TODO PARSE THE XML DOCUMENT
-
-        const this_output_filename = try std.fmt.allocPrint(allocator, "{s}.zig", .{basename});
-        errdefer allocator.free(this_output_filename);
-
-        const interfaces_slice = try interfaces.toOwnedSlice();
-        errdefer allocator.free(interfaces_slice);
-
-        const copyright_slice: ?[]const u8 = if (copyright) |*array_list| try array_list.toOwnedSlice() else null;
-        errdefer if (copyright_slice) allocator.free(copyright_slice);
 
         return @This(){
             .allocator = allocator,

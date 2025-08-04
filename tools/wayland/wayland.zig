@@ -3,7 +3,7 @@ const builtin = @import("builtin");
 
 pub const wire = @import("wayland-wire");
 pub const wp = @import("wayland-protocols");
-pub const compat = @import("./libwayland-compat.zig");
+pub const compat = @import("./compat.zig");
 
 comptime { if (builtin.is_test) _ = wire; }
 
