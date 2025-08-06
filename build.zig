@@ -12,16 +12,16 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    const cynicmoon_encore_module = makeCynicMoonEncoreModule(b, target, optimize);
-    cynicmoon_module.addImport("encore", cynicmoon_encore_module);
+    const sorceress_module = makeSorceressModule(b, target, optimize);
+    cynicmoon_module.addImport("sorceress", sorceress_module);
 
-    //cynicmoon_module.addImport("wayland", makeWaylandModule(b, target, optimize, cynicmoon_encore_module));
+    //cynicmoon_module.addImport("wayland", makeWaylandModule(b, target, optimize, sorceress_module));
     cynicmoon_module.addImport("xkbcommon", b.createModule(.{
         .root_source_file = b.path("tools/xkb/xkbcommon.zig"),
         .target = target,
         .optimize = optimize,
     }));
-    cynicmoon_module.addImport("vulkan", makeVulkanModule(b, target, optimize, cynicmoon_encore_module));
+    cynicmoon_module.addImport("vulkan", makeVulkanModule(b, target, optimize, sorceress_module));
 
     // the game application
     const cynicmoon_exe = b.addExecutable(.{
@@ -38,7 +38,7 @@ pub fn build(b: *std.Build) void {
     cynicmoon_run_step.dependOn(&cynicmoon_run_cmd.step);
 }
 
-pub fn makeCynicMoonEncoreModule(
+pub fn makeSorceressModule(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
@@ -64,15 +64,15 @@ pub fn makeCynicMoonEncoreModule(
         else => "elf",
     };
     var asm_path_buf: [100]u8 = undefined; 
-    const asm_path = std.fmt.bufPrint(&asm_path_buf, "source/encore/asm/fcontext-{s}-{s}-{s}.s", .{ asm_cpu, asm_os, asm_abi })
+    const asm_path = std.fmt.bufPrint(&asm_path_buf, "source/sorceress/fcontext-{s}-{s}-{s}.s", .{ asm_cpu, asm_os, asm_abi })
         catch |err| std.debug.panic("Path formatting for assembly failed: {}", .{err});
 
-    const encore_module = b.addModule("cynicmoon-encore", .{
-        .root_source_file = b.path("source/encore/impl.zig"),
+    const sorceress_module = b.addModule("sorceress", .{
+        .root_source_file = b.path("source/sorceress/impl.zig"),
         .target = target, .optimize = optimize,
     });
-    encore_module.addAssemblyFile(b.path(asm_path));
-    return encore_module;
+    sorceress_module.addAssemblyFile(b.path(asm_path));
+    return sorceress_module;
 }
 
 pub const GenerateProtocolsOptions = struct {
@@ -107,7 +107,7 @@ pub fn makeWaylandModule(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
-    encore_module: *std.Build.Module,
+    sorceress_module: *std.Build.Module,
 ) *std.Build.Module {
     const wayland_wire_module = b.createModule(.{ .root_source_file = b.path("tools/wayland/wire.zig") });
     const scanner_exe = b.addExecutable(.{
@@ -115,7 +115,7 @@ pub fn makeWaylandModule(
         .root_source_file = b.path("tools/wayland/scanner.zig"),
         .target = b.graph.host,
     });
-    scanner_exe.root_module.addImport("cynicmoon-encore", encore_module);
+    scanner_exe.root_module.addImport("sorceress", sorceress_module);
     b.installArtifact(scanner_exe);
     const scanner_generate_cmd = b.addRunArtifact(scanner_exe);
 
@@ -206,7 +206,7 @@ pub fn makeVulkanModule(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
-    encore_module: *std.Build.Module,
+    sorceress_module: *std.Build.Module,
 ) *std.Build.Module {
     const registry_path = b.path("vk.xml");
     const video_path = b.path("video.xml");
@@ -215,7 +215,7 @@ pub fn makeVulkanModule(
         .root_source_file = b.path("tools/vulkan/main.zig"),
         .target = target, 
         .optimize = optimize,
-        .imports = &.{.{ .name = "cynicmoon-encore", .module = encore_module }},
+        .imports = &.{.{ .name = "sorceress", .module = sorceress_module }},
     });
     const generator_exe = b.addExecutable(.{
         .name = "vulkan-zig-generator",

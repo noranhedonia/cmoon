@@ -3,7 +3,7 @@ const registry = @import("./registry.zig");
 const Allocator = std.mem.Allocator;
 const ArraySize = registry.Array.ArraySize;
 const TypeInfo = registry.TypeInfo;
-const xml = @import("cynicmoon-encore").xml;
+const xml = @import("sorceress").xml;
 
 pub const Token = struct {
     kind: Kind,

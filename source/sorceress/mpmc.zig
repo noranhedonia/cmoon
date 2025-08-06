@@ -12,8 +12,6 @@
 const std = @import("std");
 const AtomicOrder = std.builtin.AtomicOrder;
 
-const CACHELINE_SIZE = 64;
-
 /// The MPMC queue is limited to a fixed-size buffer with a size that is a power of two.
 pub fn Mpmc(comptime T: type) type {
     return struct {
@@ -24,13 +22,13 @@ pub fn Mpmc(comptime T: type) type {
 
         buffer: []Node,
         buffer_mask: usize,
-        _pad0: [CACHELINE_SIZE - @sizeOf(usize) - @sizeOf([]Node)]u8,
+        _pad0: [std.atomic.cache_line - @sizeOf(usize) - @sizeOf([]Node)]u8,
 
         enqueue_pos: usize,
-        _pad1: [CACHELINE_SIZE - @sizeOf(usize)]u8,
+        _pad1: [std.atomic.cache_line - @sizeOf(usize)]u8,
 
         dequeue_pos: usize,
-        _pad2: [CACHELINE_SIZE - @sizeOf(usize)]u8,
+        _pad2: [std.atomic.cache_line - @sizeOf(usize)]u8,
 
         pub fn init(this: @This(), buffer: []Node) void {
             std.debug.assert(std.math.isPowerOfTwo(buffer.len));

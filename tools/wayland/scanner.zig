@@ -1,5 +1,5 @@
 const std = @import("std");
-const xml = @import("cynicmoon-encore").xml;
+const xml = @import("sorceress").xml;
 
 pub fn main() !void  {
     var gpa = std.heap.GeneralPurposeAllocator(.{ .stack_trace_frames = 32 }){};

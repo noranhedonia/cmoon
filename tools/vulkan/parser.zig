@@ -3,7 +3,7 @@ const registry = @import("./registry.zig");
 const Allocator = std.mem.Allocator;
 const ArenaAllocator = std.heap.ArenaAllocator;
 const tokenizer = @import("./tokenizer.zig");
-const xml = @import("cynicmoon-encore").xml;
+const xml = @import("sorceress").xml;
 
 const api_constants_name = "API Constants";
 
