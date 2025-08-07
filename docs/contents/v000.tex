@@ -1,1 +1,114 @@
 \section{Ver. 0.0, revisions 1-X}
+
+\subsection{Sorceress}
+TODO framework
+
+\subsubsection{Fibers and the job system}
+This fiber-based job system is implemented based on ideas presented by Naughty Dog
+in the GDC2025 talk ``Parallelizing the Naughty Dog Engine using Fibers''.
+
+[Naughty Dog Video] 
+\url{http://gdcvault.com/play/1022186/Parallelizing-the-Naughty-Dog-Engine}
+
+Running this multithreaded, the work is not guaranteed to be executed in the order it was submitted.
+That's the deal, for work to run in parallel. 
+Yielding jobs doesn't ``block'' in the traditional sense, instead the current context of execution
+is switched with a fiber that contains details of a new job to run.
+These details include a function pointer, data as an argument to the function, 
+a hint for how large the fiber stack should be and a name of the job for the fiber to inherit.
+To yield one must acquire a chain. 
+This chain can be bound to a submission, then the yielding fiber may not resume until all work bound to the chain is done.
+
+Context switching is very CPU specific, so this functionality is written in assembly.
+An implementation must be provided for every pair or CPU architecture, platform ABI and assembler to be supported.
+A great deal of help in implementing this was the source code to Boost C++ fiber context library.
+It has most of this stuff figured out for a lot of different targets.
+
+[Boost::Context]
+\url{https://github.com/boostorg/context}
+
+[Fibers, Oh My!]
+\url{https://graphitemaster.github.io/fibers/}
+
+In my last implementation of this job system in C, fiber stacks have been preallocated as a large flat array.
+There was a lot of problems with this design. 
+The memory usage was a large one, fiber stacks had to be sized for worst case.
+For example a stack size of 100 KiB was not enough to call into vkCreateInstance().
+It caused a segfault by corrupting the stacks of neighbouring fibers.
+So for a system with 160 fibers running, every fiber would need atleast 128 KiB for the needs of the application,
+but only really few jobs needed this much stack space to work -- mostly calls to heavy libraries or drivers.
+
+Here I want to improve on that by making the fiber stacks dynamically allocated.
+With that we'll be able to size every job for just as much stack space it needs to run.
+I'll achieve this by implementing an allocator, here called \textit{drifter}, for transient resources bound to a fiber context.
+Generally we make a double-ended stack where one end is for user-requested heap allocations (works like an arena allocator),
+and the second end would be responsible for slicing stack spaces for fibers.
+If a fiber yields, there are cases where the next fiber may inherit the drifter and make use of some unused stack space.
+A drifter imposes their own challenges but we'll tackle them later.
+
+Fundamental to the fiber code is thread local storage (TLS). 
+We are rolling out an array of such structures and assign them to threads by an \texttt{0..thread\_count} index.
+The thread index runs on Zig's \texttt{threadlocal}. 
+
+A deadlock happens if the MPMC ring buffer is full and running from only one thread.
+This will also happen when dequeuing from an empty buffer on singlethreaded applications.
+The waiting for enqueue/dequeue thread may never leave the loop 
+when there is no other thread to try to empty/fill the buffer. 
+This should not really be an issue unless stress testing the job system on singlethreaded environments.
+
+May get into improving context switching prediction, if this can improve speed:
+\url{http://www.crystalclearsoftware.com/soc/coroutine/coroutine/linuxasm.html}
+
+\subsubsection{Drifter allocator}
+A large problem of the drifter comes from a nature of fiber-based systems. The fiber migrates.
+There is no guarantee, that the thread that yields a fiber will be the same thread to resume it.
+We can't store this allocator in TLS, as it must migrate together with fibers, in deterministic ways.
+We'll we can implement such safety measure, but there wouldn't be a point in running fibers then, right?
+
+Drifter transitions can be identified by taking the state of both FROM and TO fibers:
+NO drifter, we are the OWNER of the drifter, we INHERITED the drifter, and the yield relationship between them (WAIT or FREE). 
+These terms I guess mean:
+\begin{itemize}
+    \item NO: The FROM fiber can be in this state at initialization or in the race condition fix (check \texttt{Sorceress.Internal.yieldFiber()}). 
+        The TO fiber is always in this state when we grab a free fiber and a new job.
+    \item OWNER: The fiber has direct ownership over the drifter. At FREE it can pass it down to another fiber without conflicts. Yield to WAIT can be tricky.
+    \item INHERITED: The fiber has no direct ownership, as it has inherited a drifter previously used by one or more waiting fibers. 
+        Passing the drifter around can generate conflicts that we must resolve first.
+    \item WAIT: The FROM fiber is added to the waitlist, the TO fiber will have to either inherit or in another way transfer the drifter without conflicts with the waiting context.
+    \item FREE: The FROM fiber is done with it's work and will be released, the TO fiber should inherit or orphan the drifter.
+\end{itemize}
+
+\subsection{Wayland}
+The Wayland book is a great resource to figure out details of how to implement Wayland clients.
+[wayland-book]\url{https://wayland-book.com/introduction.html}
+
+The libwayland-client and libwayland-server libraries implement the wire protocol for each end of the connection.
+These libraries also include some utilities for working with Wayland data structures, a simple event loop, and a pre-compiled copy of the core Wayland protocol.
+Even though we have a low-level wayland protocol implementation at our hands, we still need to make things compatible with libwayland-client,
+because Vulkan drivers still expect us to use it -- if we wan't to use the swapchain, that is.
+
+There's also a great presentation in Zig made by Jonathan Marler for the X11 server, touching basically the same principles we'll be exploring via our Wayland backend (and X11 later).
+[How to Use Abstraction to Kill Your API - Jonathan Marler - Software You Can Love Vancouver 2023]\url{https://www.youtube.com/watch?v=aPWFLkHRIAQ}
+
+\subsubsection{The wire protocol}
+[The Wayland Protocol, by Kristian Høgsberg]\url{https://wayland.freedesktop.org/docs/html/ch04.html#sect-Protocol-Wire-Format} \\
+[The Wayland Protocol, by Drew DeVault]\url{https://wayland-book.com/protocol-design/wire-protocol.html}
+
+The protocol is a stream of 32-bit values, encoded with a native endianess.
+Using Wire we represent values as the following primitive types:
+\begin{itemize}
+    \item \textbf{int, uint}: 32-bit signed or unsigned integer.
+    \item \textbf{fixed}: 24.8-bit signed fixed-point numbers.
+    \item \textbf{object}: 32-bit object ID.
+    \item \textbf{new\_id}: 32-bit object ID which allocates that object when received.
+    \item \textbf{string}: Prefixed with a 32-bit integer specifying its length (in bytes),
+        followed by the string contents and a NUL terminator, padded to 32 bits with undefined data.
+        We'll be using the UTF-8 encoding.
+    \item \textbf{array}: Prefixed with a 32-bit integer specifying its length (in bytes),
+        then the verbatim contents of the array, padded to 32 bits with undefined data.
+    \item \textbf{fd}: transfers a file descriptor to the other end using the ancillary data 
+        in the UNIX domain socket message (msg\_control).
+    \item \textbf{enum}: A single value (or bitmap) from an enumeration of known constants, encoded into a 32-bit integer.
+\end{itemize}
+
+\subsection

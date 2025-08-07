@@ -20,8 +20,8 @@ pub const Header = extern struct {
     /// `size` and `opcode` fields change their memory position based on the native endian.
     pub const SizeAndOpcode = packed struct(u32) {
         /// Specifies which Request or Event type the payload corresponds to.
-        /// - For messages sent from client to server, this indicates the Request type.
-        /// - For messages sent from server to client, this indicates the Event type.
+        /// - For messages sent from client to server, self indicates the Request type.
+        /// - For messages sent from server to client, self indicates the Event type.
         opcode: u16,
         /// The size of the Wayland message, including the `Header`.
         size: u16,
@@ -52,10 +52,10 @@ pub const Fixed = packed struct(u32) {
         };
     }
 
-    pub fn toFloat(this: @This(), comptime T: type) T {
-        const fraction: T = @floatFromInt(this.fraction);
+    pub fn toFloat(self: @This(), comptime T: type) T {
+        const fraction: T = @floatFromInt(self.fraction);
         const denominator: T = @floatFromInt(std.math.maxInt(u8));
-        const integer: T = @floatFromInt(this.integer);
+        const integer: T = @floatFromInt(self.integer);
         return (integer * denominator + fraction) / denominator;
     }
 };
@@ -69,7 +69,7 @@ pub const String = [:0]const u8;
 
 /// 32-bit object id. A value of 1 refers to the `core.wl_display` singleton object.
 ///
-/// Most Wayland protocols specify the `Object`s interface ahead of time, and this 
+/// Most Wayland protocols specify the `Object`s interface ahead of time, and self 
 /// is exposed using `Object.WithInterface(<INTERFACE>)`.
 ///
 /// This exactly matches the wire format, so it may be directly passed to `read` or `write`.
@@ -82,13 +82,13 @@ pub const Object = enum(Uint) {
     pub fn WithInterface(I: type) type {
         return enum(Uint) { _,
             pub const _SPECIFIED_INTERFACE = I;
-            pub fn asObject(this: @This()) Object { return @enumFromInt(@intFromEnum(this)); }
-            pub fn asNewId(this: @This()) NewId.WithInterface(I) { return @enumFromInt(@intFromEnum(this)); }
-            pub fn asGenericNewId(this: @This()) NewId {
+            pub fn asObject(self: @This()) Object { return @enumFromInt(@intFromEnum(self)); }
+            pub fn asNewId(self: @This()) NewId.WithInterface(I) { return @enumFromInt(@intFromEnum(self)); }
+            pub fn asGenericNewId(self: @This()) NewId {
                 return .{
                     .interface = I.NAME,
                     .version = I.VERSION,
-                    .object = @enumFromInt(@intFromEnum(this)),
+                    .object = @enumFromInt(@intFromEnum(self)),
                 };
             }
         };
@@ -96,16 +96,16 @@ pub const Object = enum(Uint) {
 };
 
 /// A new object id for generic cases where the interface cannot be inferred from the XML. One place 
-/// where this is used is `wl_registry`s `bind` request. I guess everywhere else specifies the interface 
+/// where self is used is `wl_registry`s `bind` request. I guess everywhere else specifies the interface 
 /// of the `NewId` ahead of time, it's exposed with `NewId.WithInterface(<INTERFACE>)`.
 pub const NewId = struct {
     interface: String,
     version: u32,
     object: Object,
 
-    /// A 32-bit object id. Unlike `object` however, this is only used when the id will be 
+    /// A 32-bit object id. Unlike `object` however, self is only used when the id will be 
     /// freshly allocated before it is sent over the wire. On the other side of the connection
-    /// this tells them what id you will use to refer to the new object.
+    /// self tells them what id you will use to refer to the new object.
     ///
     /// This exactly matches the wire format, so it may be directly passed to `read` or `write`.
     pub fn WithInterface(I: type) type {
@@ -146,82 +146,82 @@ pub const MessageWriter = struct {
     };
     pub const Error = error{OutOfMemory};
 
-    pub fn createId(this: @This(), name: [:0]const u8, version: u32) Error!Object {
-        return this.vtable.create_id_fn(this.pointer, name, version);
+    pub fn createId(self: @This(), name: [:0]const u8, version: u32) Error!Object {
+        return self.vtable.create_id_fn(self.pointer, name, version);
     }
 
-    pub fn destroyId(this: @This(), object_id: Object) void {
-        return this.vtable.destroy_id_fn(this.pointer, object_id);
+    pub fn destroyId(self: @This(), object_id: Object) void {
+        return self.vtable.destroy_id_fn(self.pointer, object_id);
     }
 
-    pub fn begin(this: @This(), object_id: Object, opcode: u16) Error!void {
-        return this.vtable.begin_fn(this.pointer, object_id, opcode);
+    pub fn begin(self: @This(), object_id: Object, opcode: u16) Error!void {
+        return self.vtable.begin_fn(self.pointer, object_id, opcode);
     }
 
-    pub fn write(this: @This(), bytes: []const u8) Error!void {
-        return this.vtable.write_fn(this.pointer, bytes);
+    pub fn write(self: @This(), bytes: []const u8) Error!void {
+        return self.vtable.write_fn(self.pointer, bytes);
     }
 
-    pub fn writeControlMessage(this: @This(), bytes: []const u8) Error!void {
-        return this.vtable.write_control_message_fn(this.pointer, bytes);
+    pub fn writeControlMessage(self: @This(), bytes: []const u8) Error!void {
+        return self.vtable.write_control_message_fn(self.pointer, bytes);
     }
 
-    pub fn end(this: @This()) Error!void { return this.vtable.end_fn(this.pointer); }
-    pub fn writeUnsigned(this: @This(), uint: Uint) !void { try this.write(std.mem.asBytes(&uint)); }
-    pub fn writeInteger(this: @This(), int: Int) !void { try this.writeUnsigned(@bitCast(int)); }
-    pub fn writeObject(this: @This(), object: Object) !void { try this.writeUnsigned(@intFromEnum(object)); }
+    pub fn end(self: @This()) Error!void { return self.vtable.end_fn(self.pointer); }
+    pub fn writeUnsigned(self: @This(), uint: Uint) !void { try self.write(std.mem.asBytes(&uint)); }
+    pub fn writeInteger(self: @This(), int: Int) !void { try self.writeUnsigned(@bitCast(int)); }
+    pub fn writeObject(self: @This(), object: Object) !void { try self.writeUnsigned(@intFromEnum(object)); }
 
-    pub fn writeString(this: @This(), string: String) !void {
-        try this.writeUnsigned(@intCast(string.len + 1));
-        try this.write(string);
+    pub fn writeString(self: @This(), string: String) !void {
+        try self.writeUnsigned(@intCast(string.len + 1));
+        try self.write(string);
 
         const aligned_len = std.mem.alignForward(usize, string.len + 1, @sizeOf(Word));
         const nul_bytes_required = aligned_len - string.len;
         const nul_word = [4]u8{ 0, 0, 0, 0 };
-        try this.write(nul_word[0..nul_bytes_required]);
+        try self.write(nul_word[0..nul_bytes_required]);
     }
 
-    pub fn writeArray(this: @This(), array: Array) !void {
-        try this.writeUnsigned(@intCast(array.len));
-        try this.write(array);
+    pub fn writeArray(self: @This(), array: Array) !void {
+        try self.writeUnsigned(@intCast(array.len));
+        try self.write(array);
 
         const aligned_len = std.mem.alignForward(usize, array.len + 1, @sizeOf(Word));
         const nul_bytes_required = aligned_len - array.len;
         const nul_word = [4]u8{ 0, 0, 0, 0 };
-        try this.write(nul_word[0..nul_bytes_required]);
+        try self.write(nul_word[0..nul_bytes_required]);
     }
 
-    pub fn writeOptionalObject(this: @This(), optional_object: ?Object) !void {
+    pub fn writeOptionalObject(self: @This(), optional_object: ?Object) !void {
         if (optional_object) |object| {
-            try this.writeObject(object);
+            try self.writeObject(object);
         } else {
-            try this.writeUnsigned(0);
+            try self.writeUnsigned(0);
         }
     }
 
-    pub fn writeOptionalString(this: @This(), optional_string: ?String) !void {
+    pub fn writeOptionalString(self: @This(), optional_string: ?String) !void {
         if (optional_string) |string| {
-            try this.writeString(string);
+            try self.writeString(string);
         } else {
-            try this.writeUnsigned(0);
+            try self.writeUnsigned(0);
         }
     }
 
-    pub fn writeOptionalArray(this: @This(), optional_array: ?Array) !void {
+    pub fn writeOptionalArray(self: @This(), optional_array: ?Array) !void {
         if (optional_array) |array| {
-            try this.writeArray(array);
+            try self.writeArray(array);
         } else {
-            try this.writeUnsigned(0);
+            try self.writeUnsigned(0);
         }
     }
 
-    pub fn writeFd(this: @This(), fd: Fd) !void {
+    pub fn writeFd(self: @This(), fd: Fd) !void {
         const scm_rights_msg: cmsg(std.posix.fd_t) = .{
             .level = std.posix.SOL.SOCKET,
             .type = SCM.RIGHTS,
             .data = @intFromEnum(fd),
         };
-        try this.writeControlMessage(std.mem.asBytes(&scm_rights_msg));
+        try self.writeControlMessage(std.mem.asBytes(&scm_rights_msg));
     }
 
     pub fn writeStruct(msg_writer: MessageWriter, comptime Signature: type, message: Signature) MessageWriter.Error!void {
@@ -302,12 +302,12 @@ pub const BufferedMessageWriter = struct {
         };
     }
 
-    pub fn fini(this: *@This()) void {
-        if (this.header_index != null) {
+    pub fn fini(self: *@This()) void {
+        if (self.header_index != null) {
             std.debug.print("BufferedMessageWriter: `fini()` called before `end()` called", .{});
         }
-        this.message_buffer.deinit(this.allocator);
-        this.control_message_buffer.deinit(this.allocator);
+        self.message_buffer.deinit(self.allocator);
+        self.control_message_buffer.deinit(self.allocator);
     }
 
     const MESSAGE_WRITER_VTABLE = &MessageWriter.VTable{
@@ -319,30 +319,30 @@ pub const BufferedMessageWriter = struct {
         .end_fn = messageWriterEnd,
     };
 
-    pub fn messageWriter(this: *@This()) MessageWriter {
-        return MessageWriter{ .pointer = this, .vtable = MESSAGE_WRITER_VTABLE };
+    pub fn messageWriter(self: *@This()) MessageWriter {
+        return MessageWriter{ .pointer = self, .vtable = MESSAGE_WRITER_VTABLE };
     }
 
     fn messageWriterCreateId(this_opaque: ?*const anyopaque, name: [:0]const u8, version: u32) MessageWriter.Error!Object {
-        const this: *@This() = @constCast(@ptrCast(@alignCast(this_opaque)));
+        const self: *@This() = @constCast(@ptrCast(@alignCast(this_opaque)));
         _ = name;
         _ = version;
-        defer this.next_id += 1;
-        return @enumFromInt(this.next_id);
+        defer self.next_id += 1;
+        return @enumFromInt(self.next_id);
     }
 
     fn messageWriterDestroyId(this_opaque: ?*const anyopaque, object_id: Object) void {
-        const this: *@This() = @constCast(@ptrCast(@alignCast(this_opaque)));
-        _ = this;
+        const self: *@This() = @constCast(@ptrCast(@alignCast(this_opaque)));
+        _ = self;
         _ = object_id;
     }
 
     fn messageWriterBegin(this_opaque: ?*const anyopaque, object_id: Object, opcode: u16) MessageWriter.Error!void {
-        const this: *@This() = @constCast(@ptrCast(@alignCast(this_opaque)));
-        if (this.header_index != null) {
+        const self: *@This() = @constCast(@ptrCast(@alignCast(this_opaque)));
+        if (self.header_index != null) {
             std.debug.panic("message_writer.begin() called again before message_writer.end() was called", .{});
         }
-        try this.message_buffer.ensureUnusedCapacity(this.gpa, @sizeOf(Header));
+        try self.message_buffer.ensureUnusedCapacity(self.gpa, @sizeOf(Header));
         const header = Header{
             .object = object_id,
             .size_and_opcode = .{
@@ -350,30 +350,30 @@ pub const BufferedMessageWriter = struct {
                 .size = undefined,
             },
         };
-        this.header_index = this.message_buffer.items.len;
-        this.message_buffer.appendSliceAssumeCapacity(std.mem.asBytes(&header));
+        self.header_index = self.message_buffer.items.len;
+        self.message_buffer.appendSliceAssumeCapacity(std.mem.asBytes(&header));
     }
 
     fn messageWriterEnd(this_opaque: ?*const anyopaque) MessageWriter.Error!void {
-        const this: *@This() = @constCast(@ptrCast(@alignCast(this_opaque)));
-        const header_index = this.header_index orelse {
+        const self: *@This() = @constCast(@ptrCast(@alignCast(this_opaque)));
+        const header_index = self.header_index orelse {
             std.debug.panic("message_writer.end() called before message_writer.begin()", .{});
         };
-        std.debug.assert(header_index + @sizeOf(Header) < this.message_buffer.items.len);
+        std.debug.assert(header_index + @sizeOf(Header) < self.message_buffer.items.len);
 
-        const header: *Header = @ptrCast(@alignCast(this.message_buffer.items[header_index..][0..@sizeOf(Header)]));
-        header.size_and_opcode.size = @intCast(this.message_buffer.items.len - header_index);
-        this.header_index = null;
+        const header: *Header = @ptrCast(@alignCast(self.message_buffer.items[header_index..][0..@sizeOf(Header)]));
+        header.size_and_opcode.size = @intCast(self.message_buffer.items.len - header_index);
+        self.header_index = null;
     }
 
     fn messageWriterWrite(this_opaque: ?*const anyopaque, bytes: []const u8) MessageWriter.Error!void {
-        const this: *@This() = @constCast(@ptrCast(@alignCast(this_opaque)));
-        try this.message_buffer.appendSlice(this.allocator, bytes);
+        const self: *@This() = @constCast(@ptrCast(@alignCast(this_opaque)));
+        try self.message_buffer.appendSlice(self.allocator, bytes);
     }
 
     fn messageWriterWriteControlMessage(this_opaque: ?*const anyopaque, bytes: []const u8) MessageWriter.Error!void {
-        const this: *@This() = @constCast(@ptrCast(@alignCast(this_opaque)));
-        try this.control_message_buffer.appendSlice(this.allocator, bytes);
+        const self: *@This() = @constCast(@ptrCast(@alignCast(this_opaque)));
+        try self.control_message_buffer.appendSlice(self.allocator, bytes);
     }
 };
 
@@ -550,7 +550,7 @@ pub const MessageSize = struct {
 
 pub const MessageSizeEstimate = struct {
     min_message_size: u16,
-    /// How many dynamic elements (strings and arrays) are in this message signature.
+    /// How many dynamic elements (strings and arrays) are in self message signature.
     dynamic_element_count: u32,
     /// The exact number of bytes needed to send the control message.
     /// Possible to know because the fd messages are not variably sized.
@@ -680,7 +680,7 @@ pub fn calculateSerializedWordLen(comptime Signature: type, message: Signature) 
 const SCM = struct { const RIGHTS = 0x01; };
 
 /// We define a generic `cmsg` type here for reading and writing control messages.
-/// In C, this is accomplished using macros.
+/// In C, self is accomplished using macros.
 fn cmsg(comptime T: type) type {
     const raw_struct_size = @sizeOf(c_ulong) + @sizeOf(c_int) + @sizeOf(c_int) + @sizeOf(T);
     const padded_struct_size = std.mem.alignForward(usize, @sizeOf(c_ulong) + @sizeOf(c_int) + @sizeOf(c_int) + @sizeOf(T), @alignOf(c_ulong));
@@ -693,7 +693,7 @@ fn cmsg(comptime T: type) type {
         _padding: [padding_size]u8 align(1) = [_]u8{0} ** padding_size,
         // Calculate the size of the message if padding is included.
         // This function was made for reading potentially unknown control messages, using `cmsg(void)`.
-        pub fn size(this: @This()) usize { return std.mem.alignForward(usize, this.len, @alignOf(c_long)); }
+        pub fn size(self: @This()) usize { return std.mem.alignForward(usize, self.len, @alignOf(c_long)); }
     };
 }
 

@@ -6,7 +6,6 @@
 const Sorceress = @This();
 
 host: Host,
-hints: Hints,
 internal: Internal,
 
 // ./assets/
@@ -29,27 +28,29 @@ pub const Hints = struct {
     main_name: []const u8,
     build_engine_ver: u32,
     build_main_ver: u32,
-    /// What page size to use for internal mapping. If 0, default is @max(Host.hugepage_size, Host.page_size).
-    page_size_in_use: u32,
-    /// How many system threads to run jobs on. If 0, default is Host.cpu_thread_count. Clamped to a range of 1..Host.cpu_thread_count.
-    thread_count: u32,
-    /// The number of fibers running is known at initialization time. If 0, default is 64.
-    fiber_count: u16,
-    /// External systems may use this hint for buffering per-frame data. Clamped to a range of 2..
-    frames_in_flight: u8,
-    /// The work queue must have a size that is a power of two: (1 << log2_work_queue_size).
-    log2_work_queue_size: u8,
-    /// How many preallocated regions for drifter allocators. If 0, default is log2(nextPow2(memory_ram))-1.
-    log2_region_buffer_size: u8,
-    /// Update the fiber count to use a minimum of N fibers per worker thread. If 0, default is 4.
-    minimum_fibers_per_thread: u8,
+    memory_budget: usize, // limit for the memory mapping
+    drifter_region_array_size: u32, // region structs for drifters is preallocated
+    target_thread_count: u16, // clamped 1..Host.cpu.thread_count
+    log2_fiber_count: u8, // fiber count must be a power of 2
+    log2_work_queue_size: u8, // work queue size must be a power of 2
 };
-/// Framework provided information about the host system.
+/// Framework provided information about the host system, after hints are processed.
 pub const Host = struct {
+    engine_name: []const u8,
+    app_name: []const u8,
+    build_engine_ver: u32,
+    build_main_ver: u32,
     timer_start: u64,
-    memory_ram: usize,
-    page_size: u32,
-    hugepage_size: u32,
+    thread_count: u32,
+    fiber_count: u32,
+    fiber_mask: u32,
+    fiber_query_hint: u32,
+    memory_budget: usize,
+    memory_roots: usize,
+    memory_total_ram: usize,
+    memory_page_size_in_use: u32,
+    memory_page_size: u32,
+    memory_hugepage_size: u32,
     cpu_thread_count: u32,
     cpu_core_count: u32,
     cpu_package_count: u32,
@@ -77,8 +78,12 @@ pub fn main(
     procedure: *const fn (*Sorceress, ?*anyopaque) void, 
     userdata: ?*anyopaque,
     stack_size: u32,
-) FrameworkError!void {
+) !void {
     const sorceress: *Sorceress = try Internal.initFramework(hints);
+    defer switch (builtin.os.tag) {
+        .windows => _ = std.os.windows.kernel32.VirtualFree(@ptrCast(sorceress), 0, std.os.windows.MEM_RELEASE),
+        else => std.posix.munmap(@alignCast(sorceress.internal.map)),
+    };
     const application: Internal.Application = .{
         .procedure = procedure,
         .userdata = userdata,
@@ -86,22 +91,16 @@ pub fn main(
     };
     const work: WorkSubmit = .{
         .procedure = Internal.runApplicationMain,
-        .argument = &application,
-        .stack = stack_size,
+        .argument = @constCast(&application),
         .name = "sorceress::main",
     };
-    sorceress.submit(1, &work, null);
-    Internal.dirtyDeedsDoneDirtCheap(@ptrCast(&sorceress.internal.tls[0]));
-    // won't resume until application returns from main
-    switch (builtin.os.tag) {
-        .windows => _ = std.os.windows.kernel32.VirtualFree(@ptrCast(sorceress), 0, std.os.windows.MEM_RELEASE),
-        else => std.posix.munmap(sorceress),
-    }
+    sorceress.submit(1, @ptrCast(&work), stack_size, null);
+    _ = Internal.dirtyDeedsDoneDirtCheap(@ptrCast(&sorceress.internal.tls[0]));
 }
 
 /// Submits work into the system and yields. This will not return until submitted work is done.
-pub inline fn commit(sorceress: *@This(), count: u32, work: *const WorkSubmit, stack_size: u32) void {
-    var chain: WorkChain = null;
+pub inline fn commit(sorceress: *@This(), count: u32, work: [*]const WorkSubmit, stack_size: u32) void {
+    var chain: ?WorkChain = null;
     sorceress.submit(count, work, stack_size, &chain);
     sorceress.yield(chain);
 }
@@ -109,20 +108,23 @@ pub inline fn commit(sorceress: *@This(), count: u32, work: *const WorkSubmit, s
 pub fn submit(
     sorceress: *@This(), 
     count: u32, 
-    work: *const WorkSubmit, 
+    work: [*]const WorkSubmit, 
     stack_size: u32,
-    out_chain: ?*WorkChain,
+    out_chain: ?*?WorkChain,
 ) void {
-    if (out_chain) |out| out.* = sorceress.acquireChain(count);
+    var chain: ?WorkChain = null;
+    if (out_chain != null) chain = sorceress.acquireChain(count);
+
     for (0..count) |idx| {
         const job: Internal.Job = .{
             .submit = work[idx],
             .stack_size = @intCast(stack_size),
-            .chain = out_chain.?.* orelse null,
+            .chain = chain,
         };
         const success = sorceress.internal.work_queue.enqueue(&job);
         std.debug.assert(success);
     }
+    if (out_chain) |out| out.* = chain.?;
 }
 
 pub fn yield(sorceress: *@This(), chain: ?WorkChain) void {
@@ -131,28 +133,26 @@ pub fn yield(sorceress: *@This(), chain: ?WorkChain) void {
         wait_value = @atomicLoad(usize, wait, AtomicOrder.acquire);
         std.debug.assert(wait_value != Internal.Fiber.INVALID);
     }
-    if (wait_value) {
-        const tls: *Internal.Tls = &sorceress.internal.tls[Internal.worker_thread_index];
+    if (wait_value != 0) {
+        var tls: *Internal.Tls = &sorceress.internal.tls[Internal.worker_thread_index];
         const fiber: *Internal.Fiber = &sorceress.internal.fibers[tls.fiber_in_use];
         fiber.chain = chain;
-        tls.fiber_old = tls.fiber_in_use | tls.Flags.ToWait;
-        tls = Internal.yieldFiber(tls, &fiber.context);
+        tls.fiber_old = tls.fiber_in_use | Internal.Tls.Flags.ToWait;
+        tls = Internal.yieldFiber(sorceress, tls, &fiber.context);
         Internal.updateFreeAndWaiting(tls);
     }
     if (chain) |wait| @atomicStore(usize, wait, Internal.Fiber.INVALID, AtomicOrder.release);
 }
 
 pub fn acquireChain(sorceress: *@This(), initial_value: usize) WorkChain {
-    const tls: *Internal.Tls = &sorceress.internal.tls[Internal.worker_thread_index];
-    const fiber_count = sorceress.hints.fiber_count;
     while (true) {
-        for (0..fiber_count) |idx_hint| {
-            const idx: u32 = (tls.query_hint + idx_hint) % fiber_count;
-            const lock: *usize = &sorceress.internal.locks[idx];
+        for (0..sorceress.host.fiber_count) |at| {
+            const index: u32 = (Internal.worker_thread_index * sorceress.host.fiber_query_hint + @as(u32, @intCast(at))) & sorceress.host.fiber_mask;
+            const lock: *usize = &sorceress.internal.locks[index];
 
             if (@atomicLoad(usize, lock, AtomicOrder.unordered) == Internal.Fiber.INVALID) {
                 if (@cmpxchgWeak(usize, lock, Internal.Fiber.INVALID, initial_value, 
-                    AtomicOrder.unordered, AtomicOrder.unordered))
+                    AtomicOrder.monotonic, AtomicOrder.monotonic) == null)
                 {
                     return @ptrCast(lock);
                 }
@@ -179,13 +179,13 @@ pub fn getSp() usize {
     return @intFromPtr(&dummy);
 }
 
-pub fn driftAlloc(sorceress: *@This(), stride: usize, n: u32, alignment: u32) FrameworkError!*anyopaque {
+pub fn driftAlloc(sorceress: *@This(), stride: usize, n: u32, alignment: u32) !*anyopaque {
     const tls: *Internal.Tls = sorceress.internal.tls[Internal.worker_thread_index];
     const fiber: *Internal.Fiber = sorceress.internal.fibers[tls.fiber_in_use];
     const drifter: *Internal.Drifter = fiber.drifter;
 
     const memory: *anyopaque = drifter.allocate(sorceress, stride, n, alignment) catch |err| {
-        std.log.err("Could not allocate {} bytes using drifter for {s}: {}", .{ 
+        std.log.err("Could not allocate {} bytes using drifter for {s}: {s}.", .{ 
             stride * n, fiber.work.submit.name, @errorName(err),
         });
         return err;
@@ -201,7 +201,7 @@ pub fn driftUnshift(sorceress: *@This()) void {
     drifter.tail_cursor = drifter.allocate(
         sorceress, @sizeOf(Internal.Drifter.Cursor), 1, @alignOf(Internal.Drifter.Cursor),
     ) catch |err| {
-        std.log.err("Could not allocate a drifter cursor for {s}: {}", .{ fiber.work.submit.name, @errorName(err) });
+        std.log.err("Could not allocate a drifter cursor for {s}: {s}", .{ fiber.work.submit.name, @errorName(err) });
         std.process.abort();
     };
     drifter.tail_cursor.?.* = .{
@@ -227,39 +227,39 @@ const Internal = struct {
     threadlocal var worker_thread_index: u32 = std.math.maxInt(u32);
 
     work_queue: Mpmc(Job),
-    ends: *WorkSubmit,
-    tls: *Tls,
-    threads: *std.Thread,
-    fibers: *Fiber,
-    waiting: *usize, // atomic
-    locks: *usize, // atomic
-    free: *usize, // atomic
-    bitmap: *u8, // atomic
+    ends: [*]WorkSubmit,
+    tls: [*]Tls,
+    threads: [*]std.Thread,
+    fibers: [*]Fiber,
+    waiting: [*]usize, // atomic
+    locks: [*]usize, // atomic
+    free: [*]usize, // atomic
+    bitmap: [*]u8, // atomic
     commitment: usize, // atomic
     sync: usize, // atomic
-    roots: usize,
-    regions: *Drifter.Region,
+    regions: [*]Drifter.Region,
     region_tail: usize, // atomic
+    map: MapOs,
 
     const Tls = struct {
         sorceress: *Sorceress,
         home_context: *anyopaque,
-        fiber_in_use: u16,
-        fiber_old: u16,
-        query_hint: u16,
+        fiber_in_use: u32,
+        fiber_old: u32,
 
-        const Flags = enum(u16) {
-            InUse = 0,
-            ToFree = 0x4000,
-            ToWait= 0x8000,
-            Mask = ~(Flags.ToFree | Flags.ToWait),
+        const Flags = struct {
+            const InUse = 0;
+            const ToFree = 0x40000000;
+            const ToWait = 0x80000000;
+            const Mask = 0xcfffffff;
         };
     };
+    const MapOs: type = switch (builtin.os.tag) { .windows => ?std.os.windows.LPVOID, else => []const u8, };
 
     const Job = struct {
         submit: WorkSubmit,
         stack_size: usize, 
-        chain: WorkChain,
+        chain: ?WorkChain,
     };
 
     const Fiber = struct {
@@ -268,13 +268,13 @@ const Internal = struct {
         context: *anyopaque,
         drifter: *Drifter,
         cursor: Drifter.Cursor,
-        const INVALID = std.math.maxInt(u16);
+        const INVALID = std.math.maxInt(u32);
     };
 
     /// Implemented in assembly, ofc/nfc - original/new fiber context.
-    extern fn jump_fcontext(ofc: *anyopaque, nfc: *anyopaque, vp: isize, preserve_fpu: c_int) callconv(.C) isize;
+    extern fn jump_fcontext(ofc: **anyopaque, nfc: *anyopaque, vp: usize, preserve_fpu: c_int) usize;
     /// Implemented in assembly, sp - top of stack pointer.
-    extern fn spawn_fcontext(sp: *anyopaque, stack_size: usize, procedure: PfnWork) callconv(.C) *anyopaque;
+    extern fn spawn_fcontext(sp: *anyopaque, stack_size: usize, procedure: usize) *anyopaque;
 
     const Application = struct {
         procedure: *const fn (*Sorceress, ?*anyopaque) void, 
@@ -283,78 +283,79 @@ const Internal = struct {
     };
 
     fn dirtyDeedsDoneDirtCheap(raw_tls: ?*anyopaque) ?*anyopaque {
-        const tls: *Tls = @ptrCast(raw_tls.?);
-        worker_thread_index = @atomicRmw(usize, tls.sorceress.internal.sync, AtomicRmwOp.Sub, 1, AtomicOrder.release) - 1;
-        tls.query_hint = worker_thread_index * (tls.sorceress.hints.fiber_count / tls.sorceress.hints.thread_count);
+        var tls: *Tls = @ptrCast(@alignCast(raw_tls.?));
+        const sorceress: *Sorceress = tls.sorceress;
+        worker_thread_index = @intCast(@atomicRmw(usize, &sorceress.internal.sync, AtomicRmwOp.Sub, 1, AtomicOrder.release) - 1);
         // wait until all threads are ready
-        while (@atomicLoad(usize, tls.sorceress.internal.sync, AtomicOrder.acquire) > 0) {}
+        while (@atomicLoad(usize, &sorceress.internal.sync, AtomicOrder.acquire) > 0) {}
         tls.fiber_old = Fiber.INVALID;
-        tls = yieldFiber(tls, tls.home_context);
+        tls = yieldFiber(sorceress, tls, &tls.home_context);
         updateFreeAndWaiting(tls);
         return null;
     }
 
     fn runApplicationMain(raw_work: ?*anyopaque) void {
-        const work: *Application = @ptrCast(raw_work.?);
+        const work: *const Application = @ptrCast(@alignCast(raw_work.?));
         work.procedure(work.sorceress, work.userdata);
         // won't return until the application exits
-        for (work.sorceress.internal.ends[0..work.sorceress.hints.thread_count]) |end_data| {
-            end_data.procedure = joinWorkerThread;
-            end_data.argument = work.sorceress;
-            end_data.name = "sorceress::ends";
+        for (0..work.sorceress.host.thread_count) |idx| {
+            const end: *WorkSubmit = &work.sorceress.internal.ends[idx];
+            end.procedure = joinWorkerThread;
+            end.argument = work.sorceress;
+            end.name = "sorceress::ends";
         }
-        work.sorceress.commit(work.sorceress.hints.thread_count, work.sorceress.framework.ends);
+        work.sorceress.commit(work.sorceress.host.thread_count, work.sorceress.internal.ends, 2048);
         unreachable;
     }
 
     fn joinWorkerThread(raw_sorceress: ?*anyopaque) void {
-        const sorceress: *Sorceress = @ptrCast(raw_sorceress.?);
+        const sorceress: *Sorceress = @ptrCast(@alignCast(raw_sorceress.?));
         const tls: *Tls = &sorceress.internal.tls[worker_thread_index];
         const fiber: *Fiber = &sorceress.internal.fibers[tls.fiber_in_use];
 
         if (tls == &sorceress.internal.tls[0])
-            for (1..sorceress.hints.thread_count) |idx| std.Thread.join(sorceress.internal.threads[idx]);
-        tls.fiber_old = tls.fiber_in_use | tls.Flags.ToFree;
+            for (1..sorceress.host.thread_count) |idx| std.Thread.join(sorceress.internal.threads[idx]);
+        tls.fiber_old = tls.fiber_in_use | Tls.Flags.ToFree;
+
         std.debug.assert(fiber.context != tls.home_context);
-        _ = jump_fcontext(&fiber.context, tls.home_context, @bitCast(tls), 1);
+        _ = jump_fcontext(&fiber.context, tls.home_context, @intCast(@intFromPtr(tls)), 1);
         unreachable;
     }
 
     fn updateFreeAndWaiting(tls: *Tls) void {
         if (tls.fiber_old == Fiber.INVALID) return;
-        const fiber_idx: u16 = tls.fiber_old & Tls.Flags.Mask;
+        const fiber_idx: u32 = tls.fiber_old & Tls.Flags.Mask;
 
         // A thread that added a fiber to the free list is the same as the one freeing it
-        if (tls.fiber_old & Tls.Flags.ToFree)
+        if ((tls.fiber_old & Tls.Flags.ToFree) != 0)
             @atomicStore(usize, &tls.sorceress.internal.free[fiber_idx], @intCast(fiber_idx), AtomicOrder.unordered);
         // Wait threshold needs to be thread synced, so a CPU fence is welcome
-        if (tls.fiber_old & Tls.Flags.ToWait)
+        if ((tls.fiber_old & Tls.Flags.ToWait) != 0)
             @atomicStore(usize, &tls.sorceress.internal.waiting[fiber_idx], @intCast(fiber_idx), AtomicOrder.release);
         tls.fiber_old = Fiber.INVALID;
     }
 
-    fn theWork(raw_tls: ?*anyopaque) void {
-        var tls: *Tls = @ptrCast(raw_tls.?);
+    fn theWork(raw_tls: usize) void {
+        var tls: *Tls = @ptrFromInt(raw_tls);
         const sorceress: *Sorceress = tls.sorceress;
         const fiber: *Fiber = &sorceress.internal.fibers[tls.fiber_in_use];
         updateFreeAndWaiting(tls);
 
         fiber.work.submit.procedure(fiber.work.submit.argument);
-        if (fiber.work.chain) |chain| 
-            @atomicRmw(usize, chain, AtomicRmwOp.Sub, 1, AtomicOrder.release);
+        if (fiber.work.chain) |chain| _ = @atomicRmw(usize, chain, AtomicRmwOp.Sub, 1, AtomicOrder.release);
         fiber.drifter.restoreFromCursor(sorceress, &fiber.cursor);
         fiber.drifter.tail_cursor = fiber.cursor.prev;
 
         // The thread may have changed between yields.
         tls = &sorceress.internal.tls[worker_thread_index];
         tls.fiber_old = tls.fiber_in_use | Tls.Flags.ToFree;
-        yieldFiber(tls, &fiber.context);
+        _ = yieldFiber(sorceress, tls, &fiber.context);
         unreachable;
     }
 
-    fn findFreeFiber(sorceress: *Sorceress, hint: u16) u16 {
-        for (0..sorceress.hints.fiber_count) |at| {
-            const index: u16 = (hint +% at) % sorceress.hints.fiber_count;
+    fn findFreeFiber(sorceress: *Sorceress) u32 {
+        for (0..sorceress.host.fiber_count) |at| {
+            const index: u32 = (Internal.worker_thread_index * sorceress.host.fiber_query_hint + @as(u32, @intCast(at))) & sorceress.host.fiber_mask;
             const free: *usize = &sorceress.internal.free[index];
 
             // Double lock should help CPUs that have a weak memory model, like ARM.
@@ -364,14 +365,15 @@ const Internal = struct {
             fiber_free = @atomicLoad(usize, free, AtomicOrder.acquire);
             if (fiber_free >= Fiber.INVALID) continue;
 
-            if (@cmpxchgWeak(usize, free, fiber_free, Fiber.INVALID, AtomicOrder.release, AtomicOrder.unordered)) return fiber_free;
+            if (@cmpxchgWeak(usize, free, fiber_free, Fiber.INVALID, AtomicOrder.release, AtomicOrder.monotonic) == null) 
+                return @intCast(fiber_free);
         }
         return Fiber.INVALID;
     }
 
-    fn queryThroughFibers(sorceress: *Sorceress, hint: u16) u16 {
-        for (0..sorceress.hints.fiber_count) |at| {
-            const index: u16 = (hint +% at) % sorceress.hints.fiber_count;
+    fn queryThroughFibers(sorceress: *Sorceress) u32 { // TODO resolve drifter
+        for (0..sorceress.host.fiber_count) |at| {
+            const index: u32 = (Internal.worker_thread_index * sorceress.host.fiber_query_hint + @as(u32, @intCast(at))) & sorceress.host.fiber_mask;
             const waiting: *usize = &sorceress.internal.waiting[index];
             
             // Double lock should help CPUs that have a weak memory model, like ARM.
@@ -382,27 +384,26 @@ const Internal = struct {
             if (fiber_waiting >= Fiber.INVALID) continue;
 
             const fiber: *Fiber = &sorceress.internal.fibers[fiber_waiting];
-            if (fiber.chain) |chain|
-                if (@atomicLoad(usize, chain, AtomicOrder.unordered)) continue;
+            if (fiber.chain) |chain| // check if finished
+                if (@atomicLoad(usize, chain, AtomicOrder.unordered) != 0) continue;
 
-            if (@cmpxchgWeak(usize, waiting, fiber_waiting, Fiber.INVALID, AtomicOrder.release, AtomicOrder.unordered)) {
-                return fiber_waiting;
+            if (@cmpxchgWeak(usize, waiting, fiber_waiting, Fiber.INVALID, AtomicOrder.release, AtomicOrder.monotonic) == null) {
+                // TODO resolve drifter
+                return @intCast(fiber_waiting);
             }
         }
         var job: Job = undefined;
-        var fiber_index: u16 = Fiber.INVALID;
+        var fiber_index: u32 = Fiber.INVALID;
 
         if (!sorceress.internal.work_queue.dequeue(&job)) 
             return fiber_index;
-        std.debug.assert(job.submit.procedure and job.stack_size > 0);
-        while (fiber_index == Fiber.INVALID) fiber_index = findFreeFiber(sorceress, hint);
+        while (fiber_index == Fiber.INVALID) fiber_index = findFreeFiber(sorceress);
 
         const fiber: *Fiber = &sorceress.internal.fibers[fiber_index];
-        const drifter: ?*Drifter = null; // TODO resolve drifter inheritance
+        //const drifter: ?*Drifter = null; // TODO resolve drifter inheritance
         //if (!drifter) TODO resolve drifter
-        fiber.drifter = drifter.?;
-        std.debug.assert(drifter); // TODO
-  
+        //fiber.drifter = drifter.?;
+
         fiber.cursor.tail_region = fiber.drifter.tail_region;
         fiber.cursor.offset = fiber.drifter.tail_region.offset;
         fiber.cursor.stack = fiber.drifter.tail_region.stack;
@@ -410,27 +411,38 @@ const Internal = struct {
         fiber.drifter.tail_cursor = &fiber.cursor;
         fiber.work = job;
 
-        const stack: *anyopaque = fiber.drifter.createStack(sorceress, job.stack_size);
-        fiber.context = spawn_fcontext(stack, job.stack_size, theWork);
+        const stack: *anyopaque = fiber.drifter.createStack(sorceress, job.stack_size) catch |err| {
+            std.log.err("Creating a fiber stack of size {} failed for job {s}: {s}.", .{ 
+                job.stack_size, job.submit.name, @errorName(err),
+            });
+            std.process.abort();
+        };
+        fiber.context = spawn_fcontext(stack, job.stack_size, @intFromPtr(&theWork));
+        return fiber_index;
     }
 
-    fn yieldFiber(tls: *Tls, context: *anyopaque) *Tls {
-        const sorceress: *Sorceress = tls.sorceress;
-        var wait_chain: ?*WorkChain = null;
+    fn yieldFiber(sorceress: *Sorceress, tls: *Tls, context: **anyopaque) *Tls {
+        var wait_chain: ?WorkChain = null;
 
-        if ((tls.fiber_old != Fiber.INVALID) and (tls.fiber_old & Tls.Flags.ToWait)) {
+        if (tls.fiber_old != Fiber.INVALID) {
             const fiber: *Fiber = &sorceress.internal.fibers[tls.fiber_old & Tls.Flags.Mask];
-            wait_chain = fiber.chain;
-            // TODO resolve drifter inheritance
+
+            if (tls.fiber_old & Tls.Flags.ToWait != 0) {
+                wait_chain = fiber.chain;
+                // TODO resolve drifter
+            } else {
+                // TODO resolve drifter
+            }
         }
         while (true) {
-            const fiber_index: u16 = queryThroughFibers(sorceress, tls.query_hint);
+            const fiber_index: u32 = queryThroughFibers(sorceress); // TODO resolve drifter
             // The fiber will be invalid if there are no waiting fibers and there are no new jobs.
             if (fiber_index != Fiber.INVALID) {
                 const fiber: *Fiber = &sorceress.internal.fibers[fiber_index];
+
                 tls.fiber_in_use = fiber_index;
-                std.debug.assert(fiber.context != tls.home_context);
-                return @ptrFromInt(jump_fcontext(context, &fiber.context, @bitCast(tls), 1));
+                std.debug.assert(context.* != fiber.context);
+                return @ptrFromInt(jump_fcontext(context, fiber.context, @intFromPtr(tls), 1));
             }
             // Race condition fix. Context needs to wait until a set of jobs are done. 
             // The jobs finish before a new context to swap to is found - there's no new jobs. 
@@ -502,8 +514,8 @@ const Internal = struct {
             drifter: *@This(),
             sorceress: *Sorceress, 
             stack_size: usize,
-        ) FrameworkError!*anyopaque {
-            const tail: *Region = drifter.tail_region;
+        ) !*anyopaque {
+            var tail: *Region = drifter.tail_region;
             // For existing stack spaces we can read the stack pointer and possibly fit it
             // or expand upon the existing stack, this way avoiding any allocations.
             const spawn_fcontext_padding = comptime switch (builtin.os.tag) {
@@ -514,7 +526,7 @@ const Internal = struct {
             var top_of_stack: usize = @intFromPtr(sorceress) + tail.at + tail.alloc;
             var new_stack_space = std.mem.alignForward(usize, stack_size, top_of_stack_alignment);
 
-            if (tail.stack) {
+            if (tail.stack != 0) {
                 const sp: usize = getSp() - spawn_fcontext_padding;
                 const offset_from_top = std.mem.alignForward(usize, top_of_stack - sp, top_of_stack_alignment);
                 new_stack_space = @max(tail.stack, offset_from_top + stack_size);
@@ -534,9 +546,9 @@ const Internal = struct {
             sorceress: *Sorceress,
             request: usize,
             tail_region: *Region,
-        ) FrameworkError!*Region {
+        ) !*Region {
             const block_aligned = std.mem.alignForward(usize, request, BLOCK_SIZE);
-            const block_at = acquireBlocks(sorceress, block_aligned, sorceress.internal.roots);
+            const block_at = acquireBlocks(sorceress, block_aligned, sorceress.host.memory_roots);
             if (block_at == 0) 
                 return FrameworkError.OutOfMemory;
 
@@ -559,7 +571,7 @@ const Internal = struct {
             sorceress: *Sorceress,
             cursor: *const Cursor,
         ) void {
-            drifter.tail_region = cursor.tail_region;
+            drifter.tail_region = cursor.tail_region orelse return;
             drifter.tail_region.offset = cursor.offset;
             drifter.tail_region.stack = cursor.stack;
             var next = drifter.tail_region.next;
@@ -587,7 +599,7 @@ const Internal = struct {
 
     /// Updates the bitmap for a given range of blocks.
     fn opBitmap(
-        bitmap: *u8, 
+        bitmap: [*]u8, 
         offset: usize, 
         range: usize, 
         comptime invert: bool,
@@ -600,38 +612,39 @@ const Internal = struct {
         const count = 1 + atIndexFromRange(range);
         const tail_index = head_index + count - 1;
 
-        var bitmask: u8 = ~((1 << (position & 0x07)) - 1);
+        var bitmask: u8 = ~((@as(u8, 1) << @as(u3, @intCast(position)) & 0x07) -% 1);
         for (0..count) |at| {
             const index = head_index + at;
             // XOR'ing the bitmask will leave blocks outside the range untouched.
-            if (index == tail_index) bitmask ^= ~((1 << ((position + count) & 0x07)) - 1);
+            if (index == tail_index) bitmask ^= ~((@as(u8, 1) << (@as(u3, @intCast(position + count)) & 0x07)) - 1);
             // Set the blocks as in use (bits set to 0) or as free (bits set to 1).
             _ = @atomicRmw(u8, &bitmap[index], op, if (invert) ~bitmask else bitmask, order);
             bitmask = 0xff;
         }
     }
     /// Sets a range of blocks in mapped memory as in use.
-    inline fn acquireBitmapRange(bitmap: *u8, offset: usize, range: usize) void {
+    inline fn acquireBitmapRange(bitmap: [*]u8, offset: usize, range: usize) void {
         opBitmap(bitmap, offset, range, true, AtomicRmwOp.And, AtomicOrder.acquire);
     }
     /// Sets a range of blocks in mapped memory as free.
-    inline fn releaseBitmapRange(bitmap: *u8, offset: usize, range: usize) void {
+    inline fn releaseBitmapRange(bitmap: [*]u8, offset: usize, range: usize) void {
         opBitmap(bitmap, offset, range, false, AtomicRmwOp.Or, AtomicOrder.release);
     }
 
     /// A single block allocation. We don't own the memory syns and never wait on it,
     /// instead the value of sync is passed in as the ceiling for the bitmap query.
     /// If a free block is found, we write to the bitmap and double check for data races.
-    fn findFreeBlock(bitmap: *u8, floor: usize, ceiling: usize) usize {
+    fn findFreeBlock(bitmap: [*]u8, floor: usize, ceiling: usize) usize {
         // invalidate the request early
-        if (floor >= ceiling) return 0;
+        if (floor >= ceiling) 
+            return 0;
 
         const index = atIndexFromRange(floor);
         const range = 1 + atIndexFromRange(ceiling) - index;
 
         // Try until we either succeed or hit the ceiling.
         while (true) {
-            var at: usize = bits.ffs(&bitmap[index], range);
+            var at: usize = bits.ffsBitmap(bitmap + index, range);
             
             // bits.ffs() returns a 1-based value, or 0 if no bits are set.
             // This is why later we must decrement the `at` value.
@@ -643,73 +656,10 @@ const Internal = struct {
             // We may have hit the ceiling.
             if (at >= atPositionFromBlock(ceiling)) return 0;
 
-            const bitmask: u8 = (1 << (at & 0x07));
+            const bitmask: u8 = (@as(u8, 1) << (@as(u3, @intCast(at)) & 0x07));
             const prev: u8 = @atomicRmw(u8, &bitmap[atIndexFromPosition(at)], AtomicRmwOp.And, ~bitmask, AtomicOrder.acquire);
-            if ((prev & bitmask) == bitmask) return atBlockFromPosition(at);
-        }
-        unreachable;
-    }
-
-    /// Returns begin of the mapped range or 0 if no free memory is left.
-    /// Will try to commit into physical memory if the initial request could not be satisfied.
-    fn acquireBlocks(sorceress: *Sorceress, request: usize, roots: usize) usize {
-        var commitment = @atomicLoad(usize, &sorceress.internal.commitment, AtomicOrder.unordered);
-        const sync: *usize = sorceress.internal.sync;
-
-        while (true) {
-            const sync_value = @atomicLoad(usize, sync, AtomicOrder.acquire);
-
-            // The allocation process can be greatly simplified if only a single block of 
-            // mapped memory was requested (2 MiB), that allows us to avoid locks too.
-            if (request <= BLOCK_SIZE) {
-                const ceiling = if (sync_value > 0) @min(sync_value, commitment) else commitment;
-                const at = findFreeBlock(sorceress.internal.bitmap, roots, ceiling);
-                if (at) { return at; } else if (sync_value) continue;
-            }
-            if (!@cmpxchgWeak(usize, sync, 0, roots, AtomicOrder.release, AtomicOrder.unordered))
-                continue; // Another thread owns the sync counter. 
-
-            var at: usize = 0;
-            // Reload the value of commitment.
-            commitment = @atomicLoad(usize, &sorceress.internal.commitment, AtomicOrder.unordered);
-            // This step can be skipped if we came here from the implication that there is
-            // not enough free commited memory to satisfy even a minimal allocation. 
-            if (request > BLOCK_SIZE) {
-                at = findFreeRange(sorceress.internal.bitmap, request, roots, commitment, sync);
-                if (at and at + request <= commitment) {
-                    acquireBitmapRange(sorceress.internal.bitmap, at, request);
-                    @atomicStore(usize, sync, 0, AtomicOrder.release);
-                    return at;
-                }
-            }
-            if (!at) at = commitment;
-            @atomicStore(usize, sync, at, AtomicOrder.release);
-            const range = request - (commitment - at);
-
-            var success: bool = true;
-            const map: *anyopaque = @ptrCast(sorceress + commitment);
-            // We must commit physical memory.
-            if (range + commitment > sorceress.hints.memory_ram_budget) switch (builtin.os.tag) {
-                .windows => std.os.windows.VirtualProtect(), // TODO windows stuff
-                else => { 
-                    std.posix.mprotect(map, range, std.posix.PROT.READ | std.posix.PROT.WRITE) catch |err| {
-                        std.log.debug("mprotect(PROT_READ | PROT_WRITE) failed to commit new resources: {}", .{ @errorName(err) });
-                        success = false;
-                    };
-                    if (success) std.posix.madvise(map, range, std.posix.MADV.WILLNEED) catch |err| {
-                        std.log.debug("madvise(MADV_WILLNEED) failed to commit new resources: {}", .{ @errorName(err) });
-                        success = false;
-                    };
-                }
-            };
-            if (!success) {
-                std.log.err("Can't commit physical resources for request: {} at range {}: mapped range {}-{}.", .{ request, range, commitment, commitment+range });
-                return 0;
-            }
-            acquireBitmapRange(sorceress.internal.bitmap, at, request);
-            @atomicStore(usize, &sorceress.internal.commitment, commitment + range, AtomicOrder.release);
-            @atomicStore(usize, sync, 0, AtomicOrder.release);
-            return at;
+            if ((prev & bitmask) == bitmask) 
+                return atBlockFromPosition(at);
         }
         unreachable;
     }
@@ -718,7 +668,7 @@ const Internal = struct {
     /// If this function was called, it is assumed the caller owns the sync counter.
     /// The implementation is simple, we don't optimize for best fit or anything.
     fn findFreeRange(
-        bitmap: *u8, 
+        bitmap: [*]u8, 
         request: usize, 
         floor: usize, 
         ceiling: usize, 
@@ -726,15 +676,16 @@ const Internal = struct {
     ) usize {
         const range = atPositionFromBlock(request);    
         // invalidate the request early
-        if ((floor > ceiling) || !range || (range < atPositionFromBlock((ceiling - floor)))) return 0;
+        if (floor >= ceiling or range == 0 or (range < atPositionFromBlock((ceiling - floor)))) 
+            return 0;
 
         const head_index = atPositionFromBlock(floor);
-        const tail_index = atIndexFromRange(ceiling);
+        const tail_index = 1 + atIndexFromRange(ceiling);
 
         var candidate: usize = 0;
         var current: usize = 0;
 
-        for (head_index..(tail_index+1)) |at| {
+        for (head_index..tail_index) |at| {
             const byte: u8 = @atomicLoad(u8, &bitmap[at], AtomicOrder.unordered);
 
             if (byte == 0xff) {
@@ -743,7 +694,7 @@ const Internal = struct {
                 current += 8;
                 if (current >= range) return atBlockFromPosition(candidate);
             } else if (byte != 0) {
-                for (0..8) |bit| if ((byte >> bit) & 1) {
+                for (0..8) |bit| if (((byte >> @as(u3, @intCast(bit))) & 1) != 0) {
                     if (current == 0)
                         candidate = atPositionFromIndex(at) + bit;
                     current += 1;
@@ -761,7 +712,67 @@ const Internal = struct {
         return 0;
     }
 
-    fn initFramework(hints: *const Hints) FrameworkError!*Sorceress {
+    /// Returns begin of the mapped range or 0 if no free memory is left.
+    /// Will try to commit into physical memory if the initial request could not be satisfied.
+    fn acquireBlocks(sorceress: *Sorceress, request: usize, roots: usize) usize {
+        var commitment = @atomicLoad(usize, &sorceress.internal.commitment, AtomicOrder.unordered);
+        const sync: *usize = &sorceress.internal.sync;
+
+        while (true) {
+            const sync_value = @atomicLoad(usize, sync, AtomicOrder.acquire);
+
+            // The allocation process can be greatly simplified if only a single block of 
+            // mapped memory was requested (2 MiB), that allows us to avoid locks too.
+            if (request <= BLOCK_SIZE) {
+                const ceiling = if (sync_value > 0) @min(sync_value, commitment) else commitment;
+                const at = findFreeBlock(sorceress.internal.bitmap, roots, ceiling);
+                if (at != 0) { return at; } else if (sync_value != 0) continue;
+            }
+            if (@cmpxchgWeak(usize, sync, 0, roots, AtomicOrder.release, AtomicOrder.monotonic) == null)
+                continue; // Another thread owns the sync counter. 
+
+            var at: usize = 0;
+            // Reload the value of commitment.
+            commitment = @atomicLoad(usize, &sorceress.internal.commitment, AtomicOrder.unordered);
+            // This step can be skipped if we came here from the implication that there is
+            // not enough free commited memory to satisfy even a minimal allocation. 
+            if (request > BLOCK_SIZE) {
+                at = findFreeRange(sorceress.internal.bitmap, request, roots, commitment, sync);
+                if (at != 0 and at + request <= commitment) {
+                    acquireBitmapRange(sorceress.internal.bitmap, at, request);
+                    @atomicStore(usize, sync, 0, AtomicOrder.release);
+                    return at;
+                }
+            }
+            if (at == 0) at = commitment;
+            @atomicStore(usize, sync, at, AtomicOrder.release);
+            const range = request - (commitment - at);
+
+            var success: bool = true;
+            const map: MapOs = sorceress.internal.map[commitment..];
+            // We must commit physical memory.
+            if (range + commitment > sorceress.host.memory_budget) switch (builtin.os.tag) {
+                .windows => std.os.windows.VirtualProtect(), // TODO windows stuff
+                else => { 
+                    std.posix.mprotect(@alignCast(@constCast(map[0..range])), std.posix.PROT.READ | std.posix.PROT.WRITE) catch |err| {
+                        std.log.err("mprotect(PROT_READ | PROT_WRITE) failed to commit new resources: {s}", .{ @errorName(err) });
+                        success = false;
+                    };
+                }
+            };
+            if (!success) {
+                std.log.err("Can't commit physical resources for request: {} at range {}: mapped range {}-{}.", .{ request, range, commitment, commitment+range });
+                return 0;
+            }
+            acquireBitmapRange(sorceress.internal.bitmap, at, request);
+            @atomicStore(usize, &sorceress.internal.commitment, commitment + range, AtomicOrder.release);
+            @atomicStore(usize, sync, 0, AtomicOrder.release);
+            return at;
+        }
+        unreachable;
+    }
+
+    fn initFramework(hints: *const Hints) !*Sorceress {
         _ = hints;
         return FrameworkError.InitializationFailed;
     }

@@ -28,21 +28,21 @@ const EnumFieldMerger = struct {
         };
     }
 
-    fn putEnumExtension(this: *EnumFieldMerger, enum_name: []const u8, field: reg.Enum.Field) !void {
-        const res = try this.enum_extensions.getOrPut(this.arena, enum_name);
+    fn putEnumExtension(self: *EnumFieldMerger, enum_name: []const u8, field: reg.Enum.Field) !void {
+        const res = try self.enum_extensions.getOrPut(self.arena, enum_name);
         if (!res.found_existing) {
             res.value_ptr.* = std.ArrayListUnmanaged(reg.Enum.Field){};
         }
-        try res.value_ptr.append(this.arena, field);
+        try res.value_ptr.append(self.arena, field);
     }
 
-    fn addRequires(this: *EnumFieldMerger, reqs: []const reg.Require) !void {
+    fn addRequires(self: *EnumFieldMerger, reqs: []const reg.Require) !void {
         for (reqs) |req| {
             for (req.extends) |enum_ext| {
                 switch (enum_ext.value) {
-                    .field => try this.putEnumExtension(enum_ext.extends, enum_ext.value.field),
-                    .new_api_constant_expr => |expr| try this.api_constants.put(
-                        this.arena,
+                    .field => try self.putEnumExtension(enum_ext.extends, enum_ext.value.field),
+                    .new_api_constant_expr => |expr| try self.api_constants.put(
+                        self.arena,
                         enum_ext.extends,
                         .{
                             .name = enum_ext.extends,
@@ -54,17 +54,17 @@ const EnumFieldMerger = struct {
         }
     }
 
-    fn mergeEnumFields(this: *EnumFieldMerger, name: []const u8, base_enum: *reg.Enum) !void {
-        // If there are no extensions for this enum, assume its valid.
-        const extensions = this.enum_extensions.get(name) orelse return;
-        this.field_set.clearRetainingCapacity();
+    fn mergeEnumFields(self: *EnumFieldMerger, name: []const u8, base_enum: *reg.Enum) !void {
+        // If there are no extensions for self enum, assume its valid.
+        const extensions = self.enum_extensions.get(name) orelse return;
+        self.field_set.clearRetainingCapacity();
 
         const n_fields_upper_bound = base_enum.fields.len + extensions.items.len;
-        const new_fields = try this.arena.alloc(reg.Enum.Field, n_fields_upper_bound);
+        const new_fields = try self.arena.alloc(reg.Enum.Field, n_fields_upper_bound);
         var i: usize = 0;
 
         for (base_enum.fields) |field| {
-            const res = try this.field_set.getOrPut(this.arena, field.name);
+            const res = try self.field_set.getOrPut(self.arena, field.name);
             if (!res.found_existing) {
                 new_fields[i] = field;
                 i += 1;
@@ -72,7 +72,7 @@ const EnumFieldMerger = struct {
         }
         // Assume that if a field name clobbers, the value is the same
         for (extensions.items) |field| {
-            const res = try this.field_set.getOrPut(this.arena, field.name);
+            const res = try self.field_set.getOrPut(self.arena, field.name);
             if (!res.found_existing) {
                 new_fields[i] = field;
                 i += 1;
@@ -83,24 +83,24 @@ const EnumFieldMerger = struct {
         base_enum.fields = new_fields[0..i];
     }
 
-    fn merge(this: *EnumFieldMerger) !void {
-        for (this.registry.api_constants) |api_constant| {
-            try this.api_constants.put(this.arena, api_constant.name, api_constant);
+    fn merge(self: *EnumFieldMerger) !void {
+        for (self.registry.api_constants) |api_constant| {
+            try self.api_constants.put(self.arena, api_constant.name, api_constant);
         }
-        for (this.registry.features) |feature| {
-            try this.addRequires(feature.requires);
+        for (self.registry.features) |feature| {
+            try self.addRequires(feature.requires);
         }
-        for (this.registry.extensions) |ext| {
-            try this.addRequires(ext.requires);
+        for (self.registry.extensions) |ext| {
+            try self.addRequires(ext.requires);
         }
         // Merge all the enum fields.
         // Assume that all keys of enum_extensions appear in `self.registry.decls`
-        for (this.registry.decls) |*decl| {
+        for (self.registry.decls) |*decl| {
             if (decl.decl_type == .enumeration) {
-                try this.mergeEnumFields(decl.name, &decl.decl_type.enumeration);
+                try self.mergeEnumFields(decl.name, &decl.decl_type.enumeration);
             }
         }
-        this.registry.api_constants = this.api_constants.values();
+        self.registry.api_constants = self.api_constants.values();
     }
 };
 
@@ -124,32 +124,32 @@ pub const Generator = struct {
         };
     }
 
-    fn deinit(this: Generator) void {
-        this.arena.deinit();
+    fn deinit(self: Generator) void {
+        self.arena.deinit();
     }
 
-    fn stripFlagBits(this: Generator, name: []const u8) []const u8 {
-        const tagless = this.id_renderer.stripAuthorTag(name);
+    fn stripFlagBits(self: Generator, name: []const u8) []const u8 {
+        const tagless = self.id_renderer.stripAuthorTag(name);
         return tagless[0 .. tagless.len - "FlagBits".len];
     }
 
-    fn stripFlags(this: Generator, name: []const u8) []const u8 {
-        const tagless = this.id_renderer.stripAuthorTag(name);
+    fn stripFlags(self: Generator, name: []const u8) []const u8 {
+        const tagless = self.id_renderer.stripAuthorTag(name);
         return tagless[0 .. tagless.len - "Flags".len];
     }
 
     // Solve `registry.declarations` according to `registry.extensions` and `registry.features`.
-    fn mergeEnumFields(this: *Generator) !void {
-        var merger = EnumFieldMerger.init(this.arena.allocator(), &this.registry);
+    fn mergeEnumFields(self: *Generator) !void {
+        var merger = EnumFieldMerger.init(self.arena.allocator(), &self.registry);
         try merger.merge();
     }
 
     // https://github.com/KhronosGroup/Vulkan-Docs/pull/1556
-    fn fixupBitFlags(this: *Generator) !void {
-        var seen_bits = std.StringArrayHashMap(void).init(this.arena.allocator());
+    fn fixupBitFlags(self: *Generator) !void {
+        var seen_bits = std.StringArrayHashMap(void).init(self.arena.allocator());
         defer seen_bits.deinit();
 
-        for (this.registry.decls) |decl| {
+        for (self.registry.decls) |decl| {
             const bitmask = switch (decl.decl_type) {
                 .bitmask => |bm| bm,
                 else => continue,
@@ -160,7 +160,7 @@ pub const Generator = struct {
         }
         var i: usize = 0;
 
-        for (this.registry.decls) |decl| {
+        for (self.registry.decls) |decl| {
             switch (decl.decl_type) {
                 .enumeration => |e| {
                     if (e.is_bitmask and seen_bits.get(decl.name) == null)
@@ -168,14 +168,14 @@ pub const Generator = struct {
                 },
                 else => {},
             }
-            this.registry.decls[i] = decl;
+            self.registry.decls[i] = decl;
             i += 1;
         }
-        this.registry.decls.len = i;
+        self.registry.decls.len = i;
     }
 
-    fn render(this: *Generator, writer: anytype) !void {
-        try renderRegistry(writer, this.arena.allocator(), &this.registry, &this.id_renderer, this.have_video);
+    fn render(self: *Generator, writer: anytype) !void {
+        try renderRegistry(writer, self.arena.allocator(), &self.registry, &self.id_renderer, self.have_video);
     }
 };
 
@@ -185,7 +185,7 @@ pub const Api = reg.Api;
 
 /// Main function for generating the Vulkan bindings. vk.xml is to be provided via `spec_xml`,
 /// and the resulting binding is written to `writer`. `allocator` will be used to allocate temporary
-/// internal datastructures - mostly via an ArenaAllocator, but sometimes a hashmap uses this allocator
+/// internal datastructures - mostly via an ArenaAllocator, but sometimes a hashmap uses self allocator
 /// directly. `api` is the API to generate the bindings for, usually `.vulkan`.
 pub fn generate(
     allocator: Allocator,

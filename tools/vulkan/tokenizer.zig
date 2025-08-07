@@ -39,35 +39,35 @@ pub const CTokenizer = struct {
     offset: usize = 0,
     in_comment: bool = false,
 
-    fn peek(this: CTokenizer) ?u8 {
-        return if (this.offset < this.source.len) this.source[this.offset] else null;
+    fn peek(self: CTokenizer) ?u8 {
+        return if (self.offset < self.source.len) self.source[self.offset] else null;
     }
 
-    fn consumeNoEof(this: *CTokenizer) u8 {
-        const c = this.peek().?;
-        this.offset += 1;
+    fn consumeNoEof(self: *CTokenizer) u8 {
+        const c = self.peek().?;
+        self.offset += 1;
         return c;
     }
 
-    fn consume(this: *CTokenizer) !u8 {
-        return if (this.offset < this.source.len)
-            return this.consumeNoEof()
+    fn consume(self: *CTokenizer) !u8 {
+        return if (self.offset < self.source.len)
+            return self.consumeNoEof()
         else
             return null;
     }
 
-    fn keyword(this: *CTokenizer) Token {
-        const start = this.offset;
-        _ = this.consumeNoEof();
+    fn keyword(self: *CTokenizer) Token {
+        const start = self.offset;
+        _ = self.consumeNoEof();
 
         while (true) {
-            const c = this.peek() orelse break;
+            const c = self.peek() orelse break;
             switch (c) {
-                'A'...'Z', 'a'...'z', '_', '0'...'9' => _ = this.consumeNoEof(),
+                'A'...'Z', 'a'...'z', '_', '0'...'9' => _ = self.consumeNoEof(),
                 else => break,
             }
         }
-        const token_text = this.source[start..this.offset];
+        const token_text = self.source[start..self.offset];
 
         const kind = if (std.mem.eql(u8, token_text, "typedef"))
             Token.Kind.kw_typedef
@@ -82,57 +82,57 @@ pub const CTokenizer = struct {
         return .{ .kind = kind, .text = token_text };
     }
 
-    fn int(this: *CTokenizer) Token {
-        const start = this.offset;
-        _ = this.consumeNoEof();
+    fn int(self: *CTokenizer) Token {
+        const start = self.offset;
+        _ = self.consumeNoEof();
 
-        const hex = this.peek() == 'x';
+        const hex = self.peek() == 'x';
         if (hex) {
-            _ = this.consumeNoEof();
+            _ = self.consumeNoEof();
         }
         while (true) {
-            switch (this.peek() orelse break) {
-                '0'...'9' => _ = this.consumeNoEof(),
+            switch (self.peek() orelse break) {
+                '0'...'9' => _ = self.consumeNoEof(),
                 'A'...'F', 'a'...'f' => {
                     if (!hex) break;
-                    _ = this.consumeNoEof();
+                    _ = self.consumeNoEof();
                 },
                 else => break,
             }
         }
         return .{
             .kind = .int,
-            .text = this.source[start..this.offset],
+            .text = self.source[start..self.offset],
         };
     }
 
-    fn skipws(this: *CTokenizer) void {
+    fn skipws(self: *CTokenizer) void {
         while (true) {
-            switch (this.peek() orelse break) {
-                ' ', '\t', '\n', '\r' => _ = this.consumeNoEof(),
+            switch (self.peek() orelse break) {
+                ' ', '\t', '\n', '\r' => _ = self.consumeNoEof(),
                 else => break,
             }
         }
     }
 
-    pub fn next(this: *CTokenizer) !?Token {
-        this.skipws();
-        if (std.mem.startsWith(u8, this.source[this.offset..], "//") or this.in_comment) {
-            const end = std.mem.indexOfScalarPos(u8, this.source, this.offset, '\n') orelse {
-                this.offset = this.source.len;
-                this.in_comment = true;
+    pub fn next(self: *CTokenizer) !?Token {
+        self.skipws();
+        if (std.mem.startsWith(u8, self.source[self.offset..], "//") or self.in_comment) {
+            const end = std.mem.indexOfScalarPos(u8, self.source, self.offset, '\n') orelse {
+                self.offset = self.source.len;
+                self.in_comment = true;
                 return null;
             };
-            this.in_comment = false;
-            this.offset = end + 1;
+            self.in_comment = false;
+            self.offset = end + 1;
         }
-        this.skipws();
+        self.skipws();
 
-        const c = this.peek() orelse return null;
+        const c = self.peek() orelse return null;
         var kind: Token.Kind = undefined;
         switch (c) {
-            'A'...'Z', 'a'...'z', '_' => return this.keyword(),
-            '0'...'9' => return this.int(),
+            'A'...'Z', 'a'...'z', '_' => return self.keyword(),
+            '0'...'9' => return self.int(),
             '*' => kind = .star,
             ',' => kind = .comma,
             ';' => kind = .semicolon,
@@ -147,9 +147,9 @@ pub const CTokenizer = struct {
             ')' => kind = .rparen,
             else => return error.UnexpectedCharacter,
         }
-        const start = this.offset;
-        _ = this.consumeNoEof();
-        return Token{ .kind = kind, .text = this.source[start..this.offset] };
+        const start = self.offset;
+        _ = self.consumeNoEof();
+        return Token{ .kind = kind, .text = self.source[start..self.offset] };
     }
 };
 
@@ -186,26 +186,26 @@ pub const XmlCTokenizer = struct {
         }
     }
 
-    fn next(this: *XmlCTokenizer) !?Token {
-        if (this.current) |current| {
+    fn next(self: *XmlCTokenizer) !?Token {
+        if (self.current) |current| {
             const token = current;
-            this.current = null;
+            self.current = null;
             return token;
         }
         var in_comment: bool = false;
 
         while (true) {
-            if (this.ctok) |*ctok| {
+            if (self.ctok) |*ctok| {
                 if (try ctok.next()) |tok| {
                     return tok;
                 }
                 in_comment = ctok.in_comment;
             }
-            this.ctok = null;
+            self.ctok = null;
 
-            if (this.it.next()) |child| {
+            if (self.it.next()) |child| {
                 switch (child.*) {
-                    .char_data => |cdata| this.ctok = CTokenizer{ .source = cdata, .in_comment = in_comment },
+                    .char_data => |cdata| self.ctok = CTokenizer{ .source = cdata, .in_comment = in_comment },
                     .comment => {}, // xml comment
                     .element => |elem| if (!in_comment) if (try elemToToken(elem)) |tok| return tok,
                 }
@@ -215,24 +215,24 @@ pub const XmlCTokenizer = struct {
         }
     }
 
-    fn nextNoEof(this: *XmlCTokenizer) !Token {
-        return (try this.next()) orelse return error.UnexpectedEof;
+    fn nextNoEof(self: *XmlCTokenizer) !Token {
+        return (try self.next()) orelse return error.UnexpectedEof;
     }
 
-    fn peek(this: *XmlCTokenizer) !?Token {
-        if (this.current) |current| {
+    fn peek(self: *XmlCTokenizer) !?Token {
+        if (self.current) |current| {
             return current;
         }
-        this.current = try this.next();
-        return this.current;
+        self.current = try self.next();
+        return self.current;
     }
 
-    fn peekNoEof(this: *XmlCTokenizer) !Token {
-        return (try this.peek()) orelse return error.UnexpectedEof;
+    fn peekNoEof(self: *XmlCTokenizer) !Token {
+        return (try self.peek()) orelse return error.UnexpectedEof;
     }
 
-    fn expect(this: *XmlCTokenizer, kind: Token.Kind) !Token {
-        const tok = (try this.next()) orelse return error.UnexpectedEof;
+    fn expect(self: *XmlCTokenizer, kind: Token.Kind) !Token {
+        const tok = (try self.next()) orelse return error.UnexpectedEof;
         if (tok.kind != kind) {
             return error.UnexpectedToken;
         }
@@ -498,7 +498,7 @@ fn parsePointers(
             tok = (try xctok.peek()) orelse return type_info;
         }
         if (tok.kind != .star) {
-            // if `is_const` is true at this point, there was a trailing const,
+            // if `is_const` is true at self point, there was a trailing const,
             // and the declaration itself is const.
             return type_info;
         }

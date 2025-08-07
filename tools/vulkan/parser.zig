@@ -191,7 +191,7 @@ fn parseBaseType(allocator: Allocator, ty: *xml.Element) !registry.Declaration {
         return try tokenizer.parseTypedef(allocator, &tok, false);
     } else {
         // Either ANativeWindow, AHardwareBuffer or CAMetalLayer. The latter has a lot of
-        // macros, which is why this part is not built into the xml/c parser.
+        // macros, which is why self part is not built into the xml/c parser.
         return registry.Declaration{
             .name = name,
             .decl_type = .{ .foreign = .{ .depends = &.{} } },
@@ -376,8 +376,8 @@ fn parsePointerMeta(fields: Fields, type_info: *registry.TypeInfo, elem: *xml.El
                     const is_already_optional = current_depth < len_attribute_depth and info.is_optional;
                     info.is_optional = is_already_optional or std.mem.eql(u8, optional_str, "true");
                 } else {
-                    // There is no information for this pointer, probably incorrect.
-                    // Currently there is one definition where this is the case, VkCudaLaunchInfoNV.
+                    // There is no information for self pointer, probably incorrect.
+                    // Currently there is one definition where self is the case, VkCudaLaunchInfoNV.
 
                     // We work around these by assuming that they are optional, so that in the case
                     // that they are, we can assign null to them.

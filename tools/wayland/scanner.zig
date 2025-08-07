@@ -138,11 +138,11 @@ pub const CommandLineOptions = struct {
     interface_versions: std.StringArrayHashMap(u32),
     imports: std.StringArrayHashMap([]const u8),
 
-    fn deinit(this: *@This()) void  {
-        this.protocol_xml_filepaths.deinit();
-        this.interface_versions.deinit();
-        this.imports.deinit();
-        this.arena.deinit();
+    fn deinit(self: *@This()) void  {
+        self.protocol_xml_filepaths.deinit();
+        self.interface_versions.deinit();
+        self.imports.deinit();
+        self.arena.deinit();
     }
 };
 
@@ -269,7 +269,7 @@ fn parseCommandLineOptions(allocator: std.mem.Allocator, arguments: []const [:0]
             \\
             \\    The path to generate a libwayland compatible protocol.zig file into.
             \\
-            \\  -h, --help       Print this message :DDD.   
+            \\  -h, --help       Print self message :DDD.   
         , .{ .command = arguments[0] });
         std.process.exit(0);
     }
@@ -307,18 +307,18 @@ pub const Protocol = struct {
     interfaces: []const Interface,
     output_filename: []const u8,
 
-    pub fn deinit(this: *@This()) void {
-        this.allocator.free(this.output_filename);
-        if (this.copyright) |copyright| this.allocator.free(copyright);
-        for (this.interfaces) |interface| {
-            this.allocator.free(interface.description);
-            this.allocator.free(interface.enums);
-            this.allocator.free(interface.requests);
-            this.allocator.free(interface.events);
+    pub fn deinit(self: *@This()) void {
+        self.allocator.free(self.output_filename);
+        if (self.copyright) |copyright| self.allocator.free(copyright);
+        for (self.interfaces) |interface| {
+            self.allocator.free(interface.description);
+            self.allocator.free(interface.enums);
+            self.allocator.free(interface.requests);
+            self.allocator.free(interface.events);
         }
-        this.allocator.free(this.interfaces);
-        this.arena.deinit();
-        this.document.deinit();
+        self.allocator.free(self.interfaces);
+        self.arena.deinit();
+        self.document.deinit();
     }
     pub fn parse(allocator: std.mem.Allocator, xml_path: []const u8) !@This() {
         if (!std.ascii.endsWithIgnoreCase(xml_path, ".xml")) return error.UnknownFileExtension;
@@ -346,11 +346,11 @@ pub const Protocol = struct {
     }
 
     fn getImports(
-        this: @This(), 
+        self: @This(), 
         interface_locations: *const std.StringHashMapUnmanaged(InterfaceLocation),
         protocols_to_import: *std.StringArrayHashMap([]const u8),
     ) !void {
-        for (this.interfaces) |interface| {
+        for (self.interfaces) |interface| {
             for (interface.requests) |req| {
                 for (req.args) |arg| {
                     if (arg.type.interface) |type_interface| {
@@ -373,16 +373,16 @@ pub const Protocol = struct {
     }
 
     fn writeImports(
-        this: @This(),
+        self: @This(),
         writer: std.io.AnyWriter,
         interface_locations: *std.StringHashMapUnmanaged(InterfaceLocation),
     ) !void {
-        var protocols_to_import = std.StringArrayHashMap([]const u8).init(this.allocator);
+        var protocols_to_import = std.StringArrayHashMap([]const u8).init(self.allocator);
         defer protocols_to_import.deinit();
-        try this.getImports(interface_locations, &protocols_to_import);
+        try self.getImports(interface_locations, &protocols_to_import);
 
         for (protocols_to_import.keys(), protocols_to_import.values()) |protocol, import| {
-            if (this.name != null and std.mem.eql(u8, protocol, this.name.?)) {
+            if (self.name != null and std.mem.eql(u8, protocol, self.name.?)) {
                 try writer.print("const {} = @This();\n", .{ std.zig.fmtId(protocol) });
                 continue;
             }
@@ -392,29 +392,29 @@ pub const Protocol = struct {
     }
 
     pub fn writeProtocolZig(
-        this: @This(), 
+        self: @This(), 
         writer: std.io.AnyWriter,
         interface_versions: std.StringArrayHashMap(u32),
         interface_locations: *std.StringHashMapUnmanaged(InterfaceLocation),
     ) !void {
-        if (this.copyright) |copyright| try writer.writeAll(copyright);
+        if (self.copyright) |copyright| try writer.writeAll(copyright);
         try writer.writeAll(
             \\const wire = @import("wayland-wire");
             \\
         );
-        try this.writeImports(writer, interface_locations);
-        for (this.interfaces) |interface| {
+        try self.writeImports(writer, interface_locations);
+        for (self.interfaces) |interface| {
             const target_version = interface_versions.get(interface.name) orelse interface.version;
             try interface.writeZig(writer, interface_locations, target_version);
         }
     }
 
     pub fn writeCompatZig(
-        this: @This(), 
+        self: @This(), 
         writer: std.io.AnyWriter,
         interface_versions: std.StringArrayHashMap(u32),
     ) !void {
-        for (this.interfaces) |interface| {
+        for (self.interfaces) |interface| {
             const target_version = interface_versions.get(interface.name) orelse interface.version;
             try interface.writeCompatZig(writer, target_version);
         }
@@ -429,16 +429,16 @@ pub const Type = struct {
 
     pub const Kind = enum { uint, int, fixed, new_id, object, fd, string, array, };
 
-    pub fn isGenericNewId(this: @This()) bool { return this.kind == .new_id and this.interface == null; }
+    pub fn isGenericNewId(self: @This()) bool { return self.kind == .new_id and self.interface == null; }
 
     pub fn writeType(
-        this: @This(),
+        self: @This(),
         writer: anytype,
         this_interface: []const u8,
         type_locations: *const std.StringHashMapUnmanaged(InterfaceLocation),
     ) @TypeOf(writer).Error!void {
-        switch (this.kind) {
-            .uint => if (this.enum_str) |str| {
+        switch (self.kind) {
+            .uint => if (self.enum_str) |str| {
                 if (std.mem.lastIndexOfScalar(u8, str, '.')) |dot_index| {
                     try writer.writeAll(str[0..dot_index + 1]);
                     try writer.print("{}", .{ SnakeToCamelCaseFormatted{ .snake_phrase = str[dot_index + 1..] }});
@@ -450,7 +450,7 @@ pub const Type = struct {
             },
             .int => try writer.writeAll("wire.Int"),
             .fixed => try writer.writeAll("wire.Fixed"),
-            .new_id => if (this.interface) |interface| {
+            .new_id => if (self.interface) |interface| {
                 try writer.writeAll("wire.NewId.WithInterface(");
                 if (type_locations.get(interface)) |location| try writer.print("{}.", .{ std.zig.fmtId(location.protocol) });
                 try writer.writeAll(interface);
@@ -458,14 +458,14 @@ pub const Type = struct {
             } else {
                 try writer.writeAll("wire.NewId");
             },
-            .object => if (this.interface) |interface| {
+            .object => if (self.interface) |interface| {
                 if (type_locations.get(interface)) |location| try writer.print("{}.", .{ std.zig.fmtId(location.protocol) });
                 try writer.writeAll(interface);
             } else {
                 try writer.writeAll("wire.Object");
             },
             .fd => try writer.writeAll("wire.Fd"),
-            .string => if (this.allow_null) {
+            .string => if (self.allow_null) {
                 try writer.writeAll("?wire.String");
             } else {
                 try writer.writeAll("wire.String");
@@ -475,13 +475,13 @@ pub const Type = struct {
     }
 
     pub fn writeFunctionType(
-        this: @This(),
+        self: @This(),
         writer: anytype,
         this_interface: []const u8,
         type_locations: *const std.StringHashMapUnmanaged(InterfaceLocation),
     ) @TypeOf(writer).Error!void {
-        switch (this.kind) {
-            .uint => if (this.enum_str) |str| {
+        switch (self.kind) {
+            .uint => if (self.enum_str) |str| {
                 if (std.mem.lastIndexOfScalar(u8, str, '.')) |dot_index| {
                     try writer.writeAll(str[0..dot_index + 1]);
                     try writer.print("{}", .{ SnakeToCamelCaseFormatted{ .snake_phrase = str[dot_index + 1..] }});
@@ -493,14 +493,14 @@ pub const Type = struct {
             },
             .int => try writer.writeAll("wire.Int"),
             .fixed => try writer.writeAll("wire.Fixed"),
-            .new_id, .object => if (this.interface) |interface| {
+            .new_id, .object => if (self.interface) |interface| {
                 if (type_locations.get(interface)) |location| try writer.print("{}.", .{ std.zig.fmtId(location.protocol) });
                 try writer.writeAll(interface);
             } else {
                 try writer.writeAll("wire.Object");
             },
             .fd => try writer.writeAll("wire.Fd"),
-            .string => if (this.allow_null) {
+            .string => if (self.allow_null) {
                 try writer.writeAll("?wire.String");
             } else {
                 try writer.writeAll("wire.String");
@@ -510,12 +510,12 @@ pub const Type = struct {
     }
 
     pub fn writeCompatType(
-        this: @This(),
+        self: @This(),
         writer: anytype,
         this_interface: []const u8,
     ) @TypeOf(writer).Error!void {
-        switch (this.kind) {
-            .uint => if (this.enum_str) |str| {
+        switch (self.kind) {
+            .uint => if (self.enum_str) |str| {
                 if (std.mem.lastIndexOfScalar(u8, str, '.')) |dot_index| {
                     try writer.writeAll(str[0 .. dot_index + 1]);
                     try writer.print("{}", .{ SnakeToCamelCaseFormatted{ .snake_phrase = str[dot_index + 1 ..] }});
@@ -528,14 +528,14 @@ pub const Type = struct {
             .int => try writer.writeAll("i32"),
             .fixed => try writer.writeAll("wire.Fixed"),
             .new_id => std.debug.panic("NewId should be handled as a return type", .{}),
-            .object => if (this.interface) |interface| {
+            .object => if (self.interface) |interface| {
                 try writer.writeAll("*");
                 try writer.writeAll(interface);
             } else {
                 try writer.writeAll("*wl_object");
             },
             .fd => try writer.writeAll("wire.Fd"),
-            .string => if (this.allow_null) {
+            .string => if (self.allow_null) {
                 try writer.writeAll("?[*:0]const u8");
             } else {
                 try writer.writeAll("[*:0]const u8");
@@ -544,24 +544,24 @@ pub const Type = struct {
         }
     }
 
-    pub fn writeCompatSignature(this: @This(), writer: anytype) @TypeOf(writer).Error!void {
-        switch (this.kind) {
+    pub fn writeCompatSignature(self: @This(), writer: anytype) @TypeOf(writer).Error!void {
+        switch (self.kind) {
             .uint => try writer.writeAll("u"),
             .int => try writer.writeAll("i"),
             .fixed => try writer.writeAll("f"),
-            .new_id => if (this.interface != null) {
+            .new_id => if (self.interface != null) {
                 try writer.writeAll("n");
             } else {
                 try writer.writeAll("sun");
             },
             .object => try writer.writeAll("o"),
             .fd => try writer.writeAll("h"),
-            .string => if (this.allow_null) {
+            .string => if (self.allow_null) {
                 try writer.writeAll("?s");
             } else {
                 try writer.writeAll("s");
             },
-            .array => if (this.allow_null) {
+            .array => if (self.allow_null) {
                 try writer.writeAll("?a");
             } else {
                 try writer.writeAll("a");
@@ -709,8 +709,8 @@ const Interface = struct {
         }
         try writeIndented(writer, 1, "};\n\n");
         try writeIndented(writer, 1,
-            \\pub fn addEventListener(this: *@This(), listener: *const EventListener, userdata: ?*anyopaque) error{AlreadySet}!void {
-            \\    if (wl_proxy_add_listener(@ptrCast(this), @ptrCast(listener), userdata) == -1) return error.AlreadySet;
+            \\pub fn addEventListener(self: *@This(), listener: *const EventListener, userdata: ?*anyopaque) error{AlreadySet}!void {
+            \\    if (wl_proxy_add_listener(@ptrCast(self), @ptrCast(listener), userdata) == -1) return error.AlreadySet;
             \\}
             \\
             \\
@@ -803,7 +803,7 @@ const Message = struct {
         type_locations: *const std.StringHashMapUnmanaged(InterfaceLocation),
         indent: u32,
     ) !void {
-        try printIndented(writer, indent + 0, "pub fn {}(this: {}, message_writer: wire.MessageWriter", .{ std.zig.fmtId(message.name), std.zig.fmtId(this_interface) });
+        try printIndented(writer, indent + 0, "pub fn {}(self: {}, message_writer: wire.MessageWriter", .{ std.zig.fmtId(message.name), std.zig.fmtId(this_interface) });
         var newid_type_opt: ?Type = null;
         var args_len: usize = message.args.len;
 
@@ -852,7 +852,7 @@ const Message = struct {
             try writeIndented(writer, indent + 1, "errdefer message_writer.destroyId(new_id);\n");
         }
         const message_name_formatted = SnakeToCamelCaseFormatted{ .snake_phrase = message.name };
-        try printIndented(writer, indent + 1, "try message_writer.begin(@enumFromInt(@intFromEnum(this)), Request.{}.OPCODE);\n", .{message_name_formatted});
+        try printIndented(writer, indent + 1, "try message_writer.begin(@enumFromInt(@intFromEnum(self)), Request.{}.OPCODE);\n", .{message_name_formatted});
         try printIndented(writer, indent + 1, "try message_writer.writeStruct(@This().Request.{}, .{{\n", .{message_name_formatted});
         for (message.args) |arg| {
             switch (arg.type.kind) {
@@ -893,7 +893,7 @@ const Message = struct {
     }
 
     pub fn writeCompatSendFn(message: @This(), writer: std.io.AnyWriter, this_interface: []const u8, indent: u32) !void {
-        try printIndented(writer, indent + 0, "pub fn {}(this: *@This()", .{ std.zig.fmtId(message.name) });
+        try printIndented(writer, indent + 0, "pub fn {}(self: *@This()", .{ std.zig.fmtId(message.name) });
         var newid_type_opt: ?Type = null;
         var args_len: usize = message.args.len;
         for (message.args) |arg| {
@@ -944,13 +944,13 @@ const Message = struct {
         const flags = if (message.is_destructor) ".{ .destroy = true }" else ".{}";
         if (newid_type_opt) |newid_type| {
             if (newid_type.interface) |interface| {
-                try printIndented(writer, indent + 1, "return @ptrCast(wl_proxy_marshal_array_flags(@ptrCast(this), {}, {s}.INTERFACE, wl_proxy_get_version(@ptrCast(this)), {s}, &args", .{ message.opcode, interface, flags });
+                try printIndented(writer, indent + 1, "return @ptrCast(wl_proxy_marshal_array_flags(@ptrCast(self), {}, {s}.INTERFACE, wl_proxy_get_version(@ptrCast(self)), {s}, &args", .{ message.opcode, interface, flags });
             } else {
-                try printIndented(writer, indent + 1, "return @ptrCast(wl_proxy_marshal_array_flags(@ptrCast(this), {}, interface, wl_proxy_get_version(@ptrCast(this)), {s}, &args", .{ message.opcode, flags });
+                try printIndented(writer, indent + 1, "return @ptrCast(wl_proxy_marshal_array_flags(@ptrCast(self), {}, interface, wl_proxy_get_version(@ptrCast(self)), {s}, &args", .{ message.opcode, flags });
             }
             try writeIndented(writer, indent + 1, ") orelse return error.Failure);\n");
         } else {
-            try printIndented(writer, indent + 1, "_ = wl_proxy_marshal_array_flags(@ptrCast(this), {}, null, wl_proxy_get_version(@ptrCast(this)), {s}, &args", .{ message.opcode, flags });
+            try printIndented(writer, indent + 1, "_ = wl_proxy_marshal_array_flags(@ptrCast(self), {}, null, wl_proxy_get_version(@ptrCast(self)), {s}, &args", .{ message.opcode, flags });
             try writeIndented(writer, indent + 1, ");\n");
         }
         try writeIndented(writer, indent + 0, "}\n\n");
@@ -1098,14 +1098,14 @@ pub const SnakeToCamelCaseFormatted = struct {
     snake_phrase: []const u8,
 
     pub fn format(
-        this: @This(),
+        self: @This(),
         comptime fmt_text: []const u8,
         options: std.fmt.FormatOptions,
         writer: anytype,
     ) !void {
         _ = fmt_text;
         _ = options;
-        var word_iter = std.mem.splitScalar(u8, this.snake_phrase, '_');
+        var word_iter = std.mem.splitScalar(u8, self.snake_phrase, '_');
         while (word_iter.next()) |word| {
             if (word.len == 0) continue;
             try writer.writeByte(std.ascii.toUpper(word[0]));
@@ -1122,7 +1122,7 @@ const StripNewlineFormatter = struct {
     text: []const u8,
 
     pub fn format(
-        this: @This(),
+        self: @This(),
         comptime fmt_text: []const u8,
         options: std.fmt.FormatOptions,
         writer: anytype,
@@ -1130,7 +1130,7 @@ const StripNewlineFormatter = struct {
         _ = fmt_text;
         _ = options;
 
-        var line_iter = std.mem.tokenizeScalar(u8, this.text, '\n');
+        var line_iter = std.mem.tokenizeScalar(u8, self.text, '\n');
         while (line_iter.next()) |line| {
             try writer.writeAll(line);
         }

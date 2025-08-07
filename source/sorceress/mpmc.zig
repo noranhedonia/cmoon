@@ -40,16 +40,16 @@ pub fn Mpmc(comptime T: type) type {
             @atomicStore(usize, &this.dequeue_pos, 0, AtomicOrder.unordered);
         }
 
-        pub fn enqueue(this: *@This(), submit: *T) bool {
+        pub fn enqueue(this: *@This(), submit: *const T) bool {
             var pos = @atomicLoad(usize, &this.enqueue_pos, AtomicOrder.unordered);
             while (true) {
                 const node: *Node = &this.buffer[pos & this.buffer_mask];
-                const sequence = @atomicLoad(usize, node.sequence, AtomicOrder.acquire);
+                const sequence = @atomicLoad(usize, &node.sequence, AtomicOrder.acquire);
                 const diff = sequence - pos;
 
                 if (diff == 0) {
                     const delta = pos + 1;
-                    if (@cmpxchgWeak(usize, &this.enqueue_pos, pos, delta, AtomicOrder.unordered, AtomicOrder.unordered)) {
+                    if (@cmpxchgWeak(usize, &this.enqueue_pos, pos, delta, AtomicOrder.monotonic, AtomicOrder.monotonic) == null) {
                         @atomicStore(usize, &node.sequence, delta, AtomicOrder.release);
                         node.data = submit.*;
                         return true;
@@ -68,12 +68,12 @@ pub fn Mpmc(comptime T: type) type {
             var pos = @atomicLoad(usize, &this.dequeue_pos, AtomicOrder.unordered);
             while (true) {
                 const node: *Node = &this.buffer[pos & this.buffer_mask];
-                const sequence = @atomicLoad(usize, node.sequence, AtomicOrder.acquire);
+                const sequence = @atomicLoad(usize, &node.sequence, AtomicOrder.acquire);
                 const diff = sequence - (pos + 1);
 
                 if (diff == 0) {
                     const delta = pos + 1;
-                    if (@cmpxchgWeak(usize, &this.dequeue_pos, pos, delta, AtomicOrder.unordered, AtomicOrder.unordered)) {
+                    if (@cmpxchgWeak(usize, &this.dequeue_pos, pos, delta, AtomicOrder.monotonic, AtomicOrder.monotonic) == null) {
                         @atomicStore(usize, &node.sequence, delta + this.buffer_mask, AtomicOrder.release);
                         out.* = node.data;
                         return true;

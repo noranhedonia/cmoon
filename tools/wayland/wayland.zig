@@ -7,9 +7,9 @@ pub const compat = @import("./compat.zig");
 
 comptime { if (builtin.is_test) _ = wire; }
 
-/// No message can be larger than this, since the size of a message is stored in 16 bits.
+/// No message can be larger than self, since the size of a message is stored in 16 bits.
 pub const MAX_MESSAGE_WORDSIZE = MAX_MESSAGE_SIZE / @sizeOf(u32);
-/// No message can be larger than this, since the size of a message is stored in 16 bits.
+/// No message can be larger than self, since the size of a message is stored in 16 bits.
 pub const MAX_MESSAGE_SIZE = std.math.maxInt(u16);
 
 /// Open a connection to the Wayland compositor, handling the various environment variables that may be set.
@@ -51,7 +51,7 @@ pub const Connection = struct {
     /// The next object id that will be allocated.
     next_id: u32 = 2,
     /// Object ids that have been released by the compositor. If the `free_ids` buffer fills up
-    /// the Connection will start "losing" ids. However, in practice this shouldn't be an issue:
+    /// the Connection will start "losing" ids. However, in practice self shouldn't be an issue:
     ///
     /// 1. cases where many ids are allocated and freed are rare
     /// 2. the lost ids don't represent lost memory, just lost address space
@@ -166,8 +166,8 @@ pub const Connection = struct {
         return @enumFromInt(@intFromEnum(wire.Object.wl_display));
     }
 
-    /// Does not inform the server of the existence of this object. That is up to the caller to handle,
-    /// using one of the protocol requests defined by Wayland. The code will look something like this:
+    /// Does not inform the server of the existence of self object. That is up to the caller to handle,
+    /// using one of the protocol requests defined by Wayland. The code will look something like self:
     ///
     /// ```zig 
     /// const new_object = try connection.createObject(INTERFACE_TYPE);
@@ -198,9 +198,9 @@ pub const Connection = struct {
         .end_fn = messageWriterEnd,
     };
 
-    pub fn messageWriter(this: *@This()) wire.MessageWriter {
+    pub fn messageWriter(self: *@This()) wire.MessageWriter {
         return wire.MessageWriter{
-            .pointer = this,
+            .pointer = self,
             .vtable = MESSAGE_WRITER_VTABLE,
         };
     }
@@ -235,12 +235,12 @@ pub const Connection = struct {
     }
 
     fn messageWriterBegin(this_opaque: ?*const anyopaque, object_id: wire.Object, opcode: u16) wire.MessageWriter.Error!void {
-        const this: *@This() = @constCast(@ptrCast(@alignCast(this_opaque)));
+        const self: *@This() = @constCast(@ptrCast(@alignCast(this_opaque)));
 
-        if (this.header_index != null) {
+        if (self.header_index != null) {
             std.debug.panic("message_writer.begin() called again before message_writer.end() was called", .{});
         }
-        try this.send_buffer.ensureUnusedCapacity(this.allocator, @sizeOf(wire.Header));
+        try self.send_buffer.ensureUnusedCapacity(self.allocator, @sizeOf(wire.Header));
 
         const header = wire.Header{
             .object = object_id,
@@ -249,31 +249,31 @@ pub const Connection = struct {
                 .size = undefined,
             },
         };
-        this.header_index = this.send_buffer.items.len;
-        this.send_buffer.appendSliceAssumeCapacity(std.mem.asBytes(&header));
+        self.header_index = self.send_buffer.items.len;
+        self.send_buffer.appendSliceAssumeCapacity(std.mem.asBytes(&header));
     }
 
     fn messageWriterEnd(this_opaque: ?*const anyopaque) wire.MessageWriter.Error!void {
-        const this: *@This() = @constCast(@ptrCast(@alignCast(this_opaque)));
+        const self: *@This() = @constCast(@ptrCast(@alignCast(this_opaque)));
 
-        const header_index = this.header_index orelse {
+        const header_index = self.header_index orelse {
             std.debug.panic("message_writer.end() called before message_writer.begin()", .{});
         };
-        std.debug.assert(header_index + @sizeOf(wire.Header) <= this.send_buffer.items.len);
+        std.debug.assert(header_index + @sizeOf(wire.Header) <= self.send_buffer.items.len);
 
-        const header: *wire.Header = @ptrCast(@alignCast(this.send_buffer.items[header_index..][0..@sizeOf(wire.Header)]));
-        header.size_and_opcode.size = @intCast(this.send_buffer.items.len - header_index);
-        this.header_index = null;
+        const header: *wire.Header = @ptrCast(@alignCast(self.send_buffer.items[header_index..][0..@sizeOf(wire.Header)]));
+        header.size_and_opcode.size = @intCast(self.send_buffer.items.len - header_index);
+        self.header_index = null;
     }
 
     fn messageWriterWrite(this_opaque: ?*const anyopaque, bytes: []const u8) wire.MessageWriter.Error!void {
-        const this: *@This() = @constCast(@ptrCast(@alignCast(this_opaque)));
-        try this.send_buffer.appendSlice(this.allocator, bytes);
+        const self: *@This() = @constCast(@ptrCast(@alignCast(this_opaque)));
+        try self.send_buffer.appendSlice(self.allocator, bytes);
     }
 
     fn messageWriterWriteControlMessage(this_opaque: ?*const anyopaque, bytes: []const u8) wire.MessageWriter.Error!void {
-        const this: *@This() = @constCast(@ptrCast(@alignCast(this_opaque)));
-        try this.send_control_buffer.appendSlice(this.allocator, bytes);
+        const self: *@This() = @constCast(@ptrCast(@alignCast(this_opaque)));
+        try self.send_control_buffer.appendSlice(self.allocator, bytes);
     }
 
     pub fn sendRequest(
@@ -440,8 +440,8 @@ pub const Connection = struct {
         connection.objects.getPtr(@enumFromInt(@intFromEnum(obj))).?.listener = listener;
     }
 
-    pub fn removeListener(this: @This()) void {
-        this.connection.objects.getPtr(this.id.asObject()).?.listener = null;
+    pub fn removeListener(self: @This()) void {
+        self.connection.objects.getPtr(self.id.asObject()).?.listener = null;
     }
 };
 
@@ -471,9 +471,9 @@ pub const ObjectInfo = struct {
 pub const ConnectionLocation = union(enum) {
     /// The Wayland connection is on an already open file descriptor, likely opened by the parent process.
     fd: std.posix.fd_t,
-    /// According to the set environment variables, the Wayland connection should be at this path.
+    /// According to the set environment variables, the Wayland connection should be at self path.
     /// The connection won't be at that path if the user doesn't have a Wayland compositor, 
-    /// so there is no guarantee that it is definitely at this path.
+    /// so there is no guarantee that it is definitely at self path.
     path: std.BoundedArray(u8, std.fs.max_path_bytes),
 };
 

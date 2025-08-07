@@ -2,6 +2,10 @@ const std = @import("std");
 const builtin = @import("builtin");
 const Sorceress = @import("sorceress");
 
+pub const pw = @import("./pw-impl.zig"); // pipewire
+pub const wl = @import("./wl-impl.zig"); // wayland
+pub const vk = @import("./vk-impl.zig"); // vulkan
+
 pub fn mainCynicMoon(sorceress: *Sorceress, userdata: ?*anyopaque) void {
     _ = sorceress;
     _ = userdata;
@@ -14,14 +18,13 @@ pub fn main() !void {
         .main_name = "cynicmoon",
         .build_engine_ver = 0x01, // TODO
         .build_main_ver = 0x01, // TODO
-        .page_size_in_use = 0,
-        .thread_count = 0,
-        .fiber_count = 256,
-        .frames_in_flight = 3,
-        .log2_work_queue_size = 11,
-        .minimum_fibers_per_thread = 8,
+        .memory_budget = 0, // read from host total ram
+        .drifter_region_array_size = 0, // calculate from budget
+        .target_thread_count = 0,
+        .log2_fiber_count = 8, // 256
+        .log2_work_queue_size = 11, // 2048
     };
     std.debug.print("begin", .{});
-    try Sorceress.main(&hints, mainCynicMoon, null, 256*1024);
+    try Sorceress.main(&hints, mainCynicMoon, null, 64*1024);
     std.debug.print("end", .{});
 }

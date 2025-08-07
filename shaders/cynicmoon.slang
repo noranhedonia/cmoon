@@ -1,4 +1,4 @@
-module cmoon;
+module cynicmoon;
 
 #if !defined(CMOON_GPU_TABLE_SET_BINDING)
 #define CMOON_GPU_TABLE_SET_BINDING 0
@@ -132,7 +132,7 @@ namespace cmoon {
         bool is_empty() { return value == 0; }
 
         RaytracingAccelerationStructure get() { 
-            return lake::ray_tracing_acceleration_structure_table[index()]; 
+            return ray_tracing_acceleration_structure_table[index()]; 
         }
     };
 #endif // CMOON_RAY_TRACING

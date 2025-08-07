@@ -1,0 +1,1 @@
+const wl = @import("wayland");

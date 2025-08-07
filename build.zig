@@ -15,12 +15,17 @@ pub fn build(b: *std.Build) void {
     const sorceress_module = makeSorceressModule(b, target, optimize);
     cynicmoon_module.addImport("sorceress", sorceress_module);
 
-    //cynicmoon_module.addImport("wayland", makeWaylandModule(b, target, optimize, sorceress_module));
+    cynicmoon_module.addImport("pipewire", b.createModule(.{
+        .root_source_file = b.path("tools/pipewire/pipewire.zig"),
+        .target = target,
+        .optimize = optimize,
+    }));
     cynicmoon_module.addImport("xkbcommon", b.createModule(.{
         .root_source_file = b.path("tools/xkb/xkbcommon.zig"),
         .target = target,
         .optimize = optimize,
     }));
+    //cynicmoon_module.addImport("wayland", makeWaylandModule(b, target, optimize, sorceress_module));
     cynicmoon_module.addImport("vulkan", makeVulkanModule(b, target, optimize, sorceress_module));
 
     // the game application
