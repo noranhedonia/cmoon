@@ -18,8 +18,8 @@ pub const Element = struct {
     attributes: []Attribute = &.{},
     children: []Content = &.{},
 
-    pub fn getAttribute(this: Element, attrib_name: []const u8) ?[]const u8 {
-        for (this.attributes) |child| {
+    pub fn getAttribute(self: Element, attrib_name: []const u8) ?[]const u8 {
+        for (self.attributes) |child| {
             if (std.mem.eql(u8, child.name, attrib_name)) {
                 return child.value;
             }
@@ -27,8 +27,8 @@ pub const Element = struct {
         return null;
     }
 
-    pub fn getCharData(this: Element, child_tag: []const u8) ?[]const u8 {
-        const child = this.findChildByTag(child_tag) orelse return null;
+    pub fn getCharData(self: Element, child_tag: []const u8) ?[]const u8 {
+        const child = self.findChildByTag(child_tag) orelse return null;
 
         if (child.children.len != 1) {
             return null;
@@ -39,27 +39,27 @@ pub const Element = struct {
         };
     }
 
-    pub fn iterator(this: Element) ChildIterator {
+    pub fn iterator(self: Element) ChildIterator {
         return .{
-            .items = this.children,
+            .items = self.children,
             .i = 0,
         };
     }
 
-    pub fn elements(this: Element) ChildElementIterator {
+    pub fn elements(self: Element) ChildElementIterator {
         return .{
-            .inner = this.iterator(),
+            .inner = self.iterator(),
         };
     }
 
-    pub fn findChildByTag(this: Element, tag: []const u8) ?*Element {
-        var it = this.findChildrenByTag(tag);
+    pub fn findChildByTag(self: Element, tag: []const u8) ?*Element {
+        var it = self.findChildrenByTag(tag);
         return it.next();
     }
 
-    pub fn findChildrenByTag(this: Element, tag: []const u8) FindChildrenByTagIterator {
+    pub fn findChildrenByTag(self: Element, tag: []const u8) FindChildrenByTagIterator {
         return .{
-            .inner = this.elements(),
+            .inner = self.elements(),
             .tag = tag,
         };
     }
@@ -68,10 +68,10 @@ pub const Element = struct {
         items: []Content,
         i: usize,
 
-        pub fn next(this: *ChildIterator) ?*Content {
-            if (this.i < this.items.len) {
-                this.i += 1;
-                return &this.items[this.i - 1];
+        pub fn next(self: *ChildIterator) ?*Content {
+            if (self.i < self.items.len) {
+                self.i += 1;
+                return &self.items[self.i - 1];
             }
             return null;
         }
@@ -80,8 +80,8 @@ pub const Element = struct {
     pub const ChildElementIterator = struct {
         inner: ChildIterator,
 
-        pub fn next(this: *ChildElementIterator) ?*Element {
-            while (this.inner.next()) |child| {
+        pub fn next(self: *ChildElementIterator) ?*Element {
+            while (self.inner.next()) |child| {
                 if (child.* != .element) {
                     continue;
                 }
@@ -95,9 +95,9 @@ pub const Element = struct {
         inner: ChildElementIterator,
         tag: []const u8,
 
-        pub fn next(this: *FindChildrenByTagIterator) ?*Element {
-            while (this.inner.next()) |child| {
-                if (!std.mem.eql(u8, child.tag, this.tag)) {
+        pub fn next(self: *FindChildrenByTagIterator) ?*Element {
+            while (self.inner.next()) |child| {
+                if (!std.mem.eql(u8, child.tag, self.tag)) {
                     continue;
                 }
                 return child;
@@ -112,8 +112,8 @@ pub const Document = struct {
     xml_decl: ?*Element,
     root: *Element,
 
-    pub fn deinit(this: Document) void {
-        var arena = this.arena; // Copy to stack so self can be taken by value.
+    pub fn deinit(self: Document) void {
+        var arena = self.arena; // Copy to stack so self can be taken by value.
         arena.deinit();
     }
 };
@@ -133,73 +133,73 @@ const Parser = struct {
         };
     }
 
-    fn peek(this: *Parser) ?u8 {
-        return if (this.offset < this.source.len) this.source[this.offset] else null;
+    fn peek(self: *Parser) ?u8 {
+        return if (self.offset < self.source.len) self.source[self.offset] else null;
     }
 
-    fn consume(this: *Parser) !u8 {
-        if (this.offset < this.source.len) {
-            return this.consumeNoEof();
+    fn consume(self: *Parser) !u8 {
+        if (self.offset < self.source.len) {
+            return self.consumeNoEof();
         }
         return error.UnexpectedEof;
     }
 
-    fn consumeNoEof(this: *Parser) u8 {
-        std.debug.assert(this.offset < this.source.len);
-        const c = this.source[this.offset];
-        this.offset += 1;
+    fn consumeNoEof(self: *Parser) u8 {
+        std.debug.assert(self.offset < self.source.len);
+        const c = self.source[self.offset];
+        self.offset += 1;
 
         if (c == '\n') {
-            this.line += 1;
-            this.column = 0;
+            self.line += 1;
+            self.column = 0;
         } else {
-            this.column += 1;
+            self.column += 1;
         }
         return c;
     }
 
-    fn eat(this: *Parser, char: u8) bool {
-        this.expect(char) catch return false;
+    fn eat(self: *Parser, char: u8) bool {
+        self.expect(char) catch return false;
         return true;
     }
 
-    fn expect(this: *Parser, expected: u8) !void {
-        if (this.peek()) |actual| {
+    fn expect(self: *Parser, expected: u8) !void {
+        if (self.peek()) |actual| {
             if (expected != actual) {
                 return error.UnexpectedCharacter;
             }
-            _ = this.consumeNoEof();
+            _ = self.consumeNoEof();
             return;
         }
         return error.UnexpectedEof;
     }
 
-    fn eatStr(this: *Parser, text: []const u8) bool {
-        this.expectStr(text) catch return false;
+    fn eatStr(self: *Parser, text: []const u8) bool {
+        self.expectStr(text) catch return false;
         return true;
     }
 
-    fn expectStr(this: *Parser, text: []const u8) !void {
-        if (this.source.len < this.offset + text.len) {
+    fn expectStr(self: *Parser, text: []const u8) !void {
+        if (self.source.len < self.offset + text.len) {
             return error.UnexpectedEof;
-        } else if (std.mem.startsWith(u8, this.source[this.offset..], text)) {
+        } else if (std.mem.startsWith(u8, self.source[self.offset..], text)) {
             var i: usize = 0;
             while (i < text.len) : (i += 1) {
-                _ = this.consumeNoEof();
+                _ = self.consumeNoEof();
             }
             return;
         }
         return error.UnexpectedCharacter;
     }
 
-    fn eatWs(this: *Parser) bool {
+    fn eatWs(self: *Parser) bool {
         var ws = false;
 
-        while (this.peek()) |ch| {
+        while (self.peek()) |ch| {
             switch (ch) {
                 ' ', '\t', '\n', '\r' => {
                     ws = true;
-                    _ = this.consumeNoEof();
+                    _ = self.consumeNoEof();
                 },
                 else => break,
             }
@@ -207,17 +207,17 @@ const Parser = struct {
         return ws;
     }
 
-    fn expectWs(this: *Parser) !void {
-        if (!this.eatWs()) return error.UnexpectedCharacter;
+    fn expectWs(self: *Parser) !void {
+        if (!self.eatWs()) return error.UnexpectedCharacter;
     }
 
-    fn currentLine(this: Parser) []const u8 {
+    fn currentLine(self: Parser) []const u8 {
         var begin: usize = 0;
-        if (std.mem.lastIndexOfScalar(u8, this.source[0..this.offset], '\n')) |prev_nl| {
+        if (std.mem.lastIndexOfScalar(u8, self.source[0..self.offset], '\n')) |prev_nl| {
             begin = prev_nl + 1;
         }
-        const end = std.mem.indexOfScalarPos(u8, this.source, this.offset, '\n') orelse this.source.len;
-        return this.source[begin..end];
+        const end = std.mem.indexOfScalarPos(u8, self.source, self.offset, '\n') orelse self.source.len;
+        return self.source[begin..end];
     }
 };
 
@@ -283,7 +283,7 @@ fn parseEqAttrValue(parser: *Parser, alloc: Allocator) ![]const u8 {
 }
 
 fn parseNameNoDupe(parser: *Parser) ![]const u8 {
-    // XML's spec on names is very long, so to make this easier
+    // XML's spec on names is very long, so to make self easier
     // we just take any character that is not special and not whitespace
     const begin = parser.offset;
 

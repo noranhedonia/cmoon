@@ -213,28 +213,40 @@ pub fn makeVulkanModule(
     optimize: std.builtin.OptimizeMode,
     sorceress_module: *std.Build.Module,
 ) *std.Build.Module {
-    const registry_path = b.path("vk.xml");
-    const video_path = b.path("video.xml");
+    const output_source_path_name = "source/vulkan.zig";
+    const output_full_path_name = "zig-out/" ++ "source/vulkan.zig";
+    var already_exists = true;
+    {
+        var cwd = std.fs.cwd();
+        cwd.access("zig-out/" ++ output_source_path_name, .{}) catch { already_exists = false; };
+    }
+    const vulkan_zig_file: std.Build.LazyPath = if (already_exists) blk: {
+        break :blk b.path(output_full_path_name);
+    } else blk: {
+        const registry_path = b.path("vk.xml");
+        const video_path = b.path("video.xml");
 
-    const generator_module = b.createModule(.{
-        .root_source_file = b.path("tools/vulkan/main.zig"),
-        .target = target, 
-        .optimize = optimize,
-        .imports = &.{.{ .name = "sorceress", .module = sorceress_module }},
-    });
-    const generator_exe = b.addExecutable(.{
-        .name = "vulkan-zig-generator",
-        .root_module = generator_module,
-    });
-    b.installArtifact(generator_exe);
+        const generator_module = b.createModule(.{
+            .root_source_file = b.path("tools/vulkan/main.zig"),
+            .target = target, 
+            .optimize = optimize,
+            .imports = &.{.{ .name = "sorceress", .module = sorceress_module }},
+        });
+        const generator_exe = b.addExecutable(.{
+            .name = "vulkan-zig-generator",
+            .root_module = generator_module,
+        });
+        b.installArtifact(generator_exe);
 
-    const vk_generate_cmd = b.addRunArtifact(generator_exe);
-    vk_generate_cmd.addArg("--video");
-    vk_generate_cmd.addFileArg(video_path);
-    vk_generate_cmd.addFileArg(registry_path);
+        const generate_cmd = b.addRunArtifact(generator_exe);
+        generate_cmd.addArg("--video");
+        generate_cmd.addFileArg(video_path);
+        generate_cmd.addFileArg(registry_path);
 
-    const vk_zig = vk_generate_cmd.addOutputFileArg("vulkan.zig");
-    const vk_zig_install_step = b.addInstallFile(vk_zig, "source/vulkan.zig");
-    b.getInstallStep().dependOn(&vk_zig_install_step.step);
-    return b.addModule("vulkan", .{ .root_source_file = vk_zig });
+        const vulkan_zig = generate_cmd.addOutputFileArg("vulkan.zig");
+        const vulkan_zig_install_step = b.addInstallFile(vulkan_zig, output_source_path_name);
+        b.getInstallStep().dependOn(&vulkan_zig_install_step.step);
+        break :blk vulkan_zig;
+    };
+    return b.addModule("vulkan", .{ .root_source_file = vulkan_zig_file });
 }

@@ -15,16 +15,18 @@ pub fn mainCynicMoon(sorceress: *Sorceress, userdata: ?*anyopaque) void {
 pub fn main() !void {
     const hints: Sorceress.Hints = .{
         .engine_name = "sorceress",
-        .main_name = "cynicmoon",
+        .app_name = "cynicmoon",
         .build_engine_ver = 0x01, // TODO
-        .build_main_ver = 0x01, // TODO
-        .memory_budget = 0, // read from host total ram
-        .drifter_region_array_size = 0, // calculate from budget
-        .target_thread_count = 0,
+        .build_app_ver = 0x01, // TODO
+        .main_stack_size = 64*1024,
+        .target_memory_budget = 0, // read from host total ram
+        .target_drifter_head_size = 1 << 19, // 512 KiB
+        .target_drifter_head_alignment = 1 << 16, // 64 KiB
+        .target_thread_count = 0, // read from host cpu count
         .log2_fiber_count = 8, // 256
         .log2_work_queue_size = 11, // 2048
     };
     std.debug.print("begin", .{});
-    try Sorceress.main(&hints, mainCynicMoon, null, 64*1024);
+    try Sorceress.main(&hints, mainCynicMoon, null);
     std.debug.print("end", .{});
 }

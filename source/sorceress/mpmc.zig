@@ -12,17 +12,19 @@
 const std = @import("std");
 const AtomicOrder = std.builtin.AtomicOrder;
 
+pub fn MpmcNode(comptime T: type) type {
+    return struct {
+        sequence: usize,
+        data: T,
+    };
+}
+
 /// The MPMC queue is limited to a fixed-size buffer with a size that is a power of two.
 pub fn Mpmc(comptime T: type) type {
     return struct {
-        pub const Node = struct {
-            sequence: usize,
-            data: T,
-        };
-
-        buffer: []Node,
+        buffer: [*]Node,
         buffer_mask: usize,
-        _pad0: [std.atomic.cache_line - @sizeOf(usize) - @sizeOf([]Node)]u8,
+        _pad0: [std.atomic.cache_line - @sizeOf(usize) - @sizeOf([*]Node)]u8,
 
         enqueue_pos: usize,
         _pad1: [std.atomic.cache_line - @sizeOf(usize)]u8,
@@ -30,26 +32,28 @@ pub fn Mpmc(comptime T: type) type {
         dequeue_pos: usize,
         _pad2: [std.atomic.cache_line - @sizeOf(usize)]u8,
 
-        pub fn init(this: @This(), buffer: []Node) void {
-            std.debug.assert(std.math.isPowerOfTwo(buffer.len));
-            this.buffer_mask = buffer.len - 1;
-            this.buffer = buffer;
+        const Node = MpmcNode(T);
+
+        pub fn init(self: *@This(), buffer: [*]Node, buffer_size: u32) void {
+            std.debug.assert(std.math.isPowerOfTwo(buffer_size));
+            self.buffer_mask = buffer_size - 1;
+            self.buffer = buffer;
 
             for (buffer, 0..) |*node, i| @atomicStore(usize, &node.sequence, i, AtomicOrder.unordered);
-            @atomicStore(usize, &this.enqueue_pos, 0, AtomicOrder.unordered);
-            @atomicStore(usize, &this.dequeue_pos, 0, AtomicOrder.unordered);
+            @atomicStore(usize, &self.enqueue_pos, 0, AtomicOrder.unordered);
+            @atomicStore(usize, &self.dequeue_pos, 0, AtomicOrder.unordered);
         }
 
-        pub fn enqueue(this: *@This(), submit: *const T) bool {
-            var pos = @atomicLoad(usize, &this.enqueue_pos, AtomicOrder.unordered);
+        pub fn enqueue(self: *@This(), submit: *const T) bool {
+            var pos = @atomicLoad(usize, &self.enqueue_pos, AtomicOrder.unordered);
             while (true) {
-                const node: *Node = &this.buffer[pos & this.buffer_mask];
+                const node: *Node = &self.buffer[pos & self.buffer_mask];
                 const sequence = @atomicLoad(usize, &node.sequence, AtomicOrder.acquire);
                 const diff = sequence - pos;
 
                 if (diff == 0) {
                     const delta = pos + 1;
-                    if (@cmpxchgWeak(usize, &this.enqueue_pos, pos, delta, AtomicOrder.monotonic, AtomicOrder.monotonic) == null) {
+                    if (@cmpxchgWeak(usize, &self.enqueue_pos, pos, delta, AtomicOrder.monotonic, AtomicOrder.monotonic) == null) {
                         @atomicStore(usize, &node.sequence, delta, AtomicOrder.release);
                         node.data = submit.*;
                         return true;
@@ -58,23 +62,23 @@ pub fn Mpmc(comptime T: type) type {
                     // it's empty
                     return false;
                 } else {
-                    pos = @atomicLoad(usize, &this.enqueue_pos, AtomicOrder.unordered);
+                    pos = @atomicLoad(usize, &self.enqueue_pos, AtomicOrder.unordered);
                 }
             }
             unreachable;
         }
 
-        pub fn dequeue(this: *@This(), out: *T) bool {
-            var pos = @atomicLoad(usize, &this.dequeue_pos, AtomicOrder.unordered);
+        pub fn dequeue(self: *@This(), out: *T) bool {
+            var pos = @atomicLoad(usize, &self.dequeue_pos, AtomicOrder.unordered);
             while (true) {
-                const node: *Node = &this.buffer[pos & this.buffer_mask];
+                const node: *Node = &self.buffer[pos & self.buffer_mask];
                 const sequence = @atomicLoad(usize, &node.sequence, AtomicOrder.acquire);
                 const diff = sequence - (pos + 1);
 
                 if (diff == 0) {
                     const delta = pos + 1;
-                    if (@cmpxchgWeak(usize, &this.dequeue_pos, pos, delta, AtomicOrder.monotonic, AtomicOrder.monotonic) == null) {
-                        @atomicStore(usize, &node.sequence, delta + this.buffer_mask, AtomicOrder.release);
+                    if (@cmpxchgWeak(usize, &self.dequeue_pos, pos, delta, AtomicOrder.monotonic, AtomicOrder.monotonic) == null) {
+                        @atomicStore(usize, &node.sequence, delta + self.buffer_mask, AtomicOrder.release);
                         out.* = node.data;
                         return true;
                     }
@@ -82,7 +86,7 @@ pub fn Mpmc(comptime T: type) type {
                     // it's empty
                     return false;
                 } else {
-                    pos = @atomicLoad(usize, &this.dequeue_pos, AtomicOrder.unordered);
+                    pos = @atomicLoad(usize, &self.dequeue_pos, AtomicOrder.unordered);
                 }
             }
             unreachable;
